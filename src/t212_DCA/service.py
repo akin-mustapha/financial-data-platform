@@ -1,76 +1,86 @@
 import logging
-import pandas as pd
-
-from typing import List, Dict, Any
-
-from dataclasses import dataclass, field
-
+from datetime import datetime, timezone
 import boto3
-from botocore.exceptions import ClientError
+import pandas as pd
 import awswrangler as wr
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-BUCKET_NAME = "financial-dataflow"
-# PREFIX = "data/bronze/trading212/positions/2026/09/14/"
-PREFIX = "data/silver/trading212/positions/ingested_date=2026-09-14/"
-REGION_NAME = "eu-west-1"
+ses_client = boto3.client("ses", region_name="eu-west-1")
+EMAIL = "akinkunmimustapha1@gmail.com"
 
 
-@dataclass
-class Asset:
-  name: str
-  ticker: str
-  current_value: float
-  total_cost: float
+def exec_sql(sql_statement: str, db: str = "financials") -> pd.DataFrame:
+    return wr.athena.read_sql_query(
+        sql=sql_statement,
+        database=db,
+        s3_output="s3://financial-dataflow/athena-results/"  # Ensure S3 output path is set
+    )
 
-try:
-  s3_client = boto3.client("s3", REGION_NAME)
-except ClientError as e:
-  logger.error(e)
-
-
-def holdings()-> List[Dict[str, Any]]:
-  try:
-    res = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=PREFIX)
-    objects = [{"key": r["Key"], "LastModified": r["LastModified"]} for r in res.get("Contents")]
-    return objects
-  except ClientError as e:
-    logger.error(e)
-    return []
-  
-
-def get_current_holdings(holdings: List[Dict[str, Any]] = None, sort_by: str = "LastModified") -> Dict[str, Any]:
-    holdings = holdings.copy()
-    holdings.sort(key=lambda x: x[sort_by], reverse=True)
-    return holdings[0]
 
 def main():
-    current_holdings = get_current_holdings(holdings=holdings(), sort_by="LastModified")
+    # Set target portfolio / cash values
+    total_portfolio_equity = 100.0  # Total portfolio value in USD/GBP
+    target_weight = 6.00            # Desired 6% target weight per asset
     
-    path = f"s3://{BUCKET_NAME}/{current_holdings['key']}"
-  
-    print(f"Loading current holdings from: {path}")
-    current_holdings = wr.s3.read_parquet(
-        path,
+    current_date = datetime.now(timezone.utc).date()
+
+    sql = f"""
+    SELECT 
+        name,
+        ticker,
+        weight_pct,
+        daily_value_change_pct,
+        current_value,
+        avg_value_7d,
+        pnl,
+        ingested_timestamp
+    FROM fact_t212_positions
+    WHERE
+        ingested_date = DATE '{current_date}'
+        AND daily_value_change_pct <= -1
+        AND current_value < avg_value_7d 
+    ORDER BY daily_value_change_pct ASC, weight_pct ASC
+    """
+
+    logger.info("Executing Athena query for dip targets...")
+    df = exec_sql(sql)
+
+    if df.empty:
+        logger.info("No dip opportunities found today. Sending summary email.")
+        email_body = f"No position dip targets found for {current_date}."
+    else:
+        # Calculate target dollar value and required rebalance amount
+        df["target_value"] = total_portfolio_equity * (target_weight / 100.0)
+        df["rebalance_amount"] = df["target_value"] - df["current_value"]
+
+        # Select & format columns for the notification
+        df_summary = df[["ticker", "current_value", "weight_pct", "target_value", "rebalance_amount"]]
+        
+        # Convert DataFrame to clean string table for email text
+        email_body = f"Dip Opportunities Identified ({current_date}):\n\n" + df_summary.to_string(index=False)
+
+    # Send SES Email
+    logger.info("Sending SES notification email...")
+    ses_client.send_email(
+        Source=EMAIL,
+        Destination={
+            "ToAddresses": [EMAIL]
+        },
+        Message={
+            "Subject": {
+                "Data": f"Portfolio Notification - {current_date}"
+            },
+            "Body": {
+                "Text": {
+                    "Data": email_body  # Now a valid string!
+                }
+            }
+        }
     )
-    
-    cols = ["name", "ticker", "current_value", "total_cost"]
-    
-    current_holdings = current_holdings[cols]
-    current_holdings = current_holdings[~current_holdings.duplicated(subset=["ticker"], keep="last")]
-    current_holdings = current_holdings.sort_values("current_value", ascending=False)
-    
-    current_account_value = current_holdings["current_value"].sum()
-    
-    current_holdings["pct_weight"] = current_holdings["current_value"] / current_account_value * 100
-    
-    print(f"Current account value: {current_account_value}")
-    print(f"Total Assets: {len(current_holdings)}")
-    # print(current_holdings.head(10))
-    
-    current_holdings.to_csv("current_holdings.csv", index=False)
+    logger.info("Email sent successfully.")
+
 
 if __name__ == "__main__":
     main()

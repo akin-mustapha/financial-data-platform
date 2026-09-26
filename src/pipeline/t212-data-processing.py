@@ -34,7 +34,7 @@ import sys
 import json
 import argparse
 import logging
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime,timezone
 from typing import List, Optional
 
 import boto3
@@ -291,6 +291,7 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
             name,
             ticker,
             ingested_date,
+            ingested_timestamp,
             quantity,
             current_price,
             current_value,
@@ -310,31 +311,31 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
                 PARTITION BY ticker
                 ORDER BY ingested_date
                 ROWS BETWEEN 6 PRECEDING AND CURRENT ROW
-            ) AS value_7d_ma,
+            ) AS avg_value_7d,
 
             AVG(current_value) OVER (
                 PARTITION BY ticker
                 ORDER BY ingested_date
                 ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-            ) AS value_30d_ma,
+            ) AS avg_value_30d,
 
             AVG(current_value) OVER (
                 PARTITION BY ticker
                 ORDER BY ingested_date
                 ROWS BETWEEN 89 PRECEDING AND CURRENT ROW
-            ) AS value_90d_ma,
+            ) AS avg_value_90d,
 
             AVG(current_value) OVER (
                 PARTITION BY ticker
                 ORDER BY ingested_date
                 ROWS BETWEEN 179 PRECEDING AND CURRENT ROW
-            ) AS value_180d_ma,
+            ) AS avg_value_180d,
 
             AVG(current_value) OVER (
                 PARTITION BY ticker
                 ORDER BY ingested_date
                 ROWS BETWEEN 364 PRECEDING AND CURRENT ROW
-            ) AS value_365d_ma
+            ) AS avg_value_365d
 
         FROM positions
         WHERE rn = 1
@@ -343,29 +344,25 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
     SELECT
         p.name,
         p.ticker,
-        p.ingested_date AS ingested_date,
         p.quantity,
         p.current_price,
         p.prev_price,
         p.current_price - p.prev_price AS daily_price_change,
-        (
-            p.current_price - p.prev_price
-        ) / NULLIF(p.prev_price, 0) * 100 AS daily_price_change_pct,
+        (p.current_price - p.prev_price) / NULLIF(p.prev_price, 0) * 100 AS daily_price_change_pct,
         p.current_value,
         p.prev_value,
-        p.current_value - p.prev_value AS daily_change,
-        (
-            p.current_value - p.prev_value
-        ) / NULLIF(p.prev_value, 0) * 100 AS daily_change_pct,
+        p.current_value - p.prev_value AS daily_value_change,
+        (p.current_value - p.prev_value) / NULLIF(p.prev_value, 0) * 100 AS daily_value_change_pct,
         p.pnl,
-        p.pnl / NULLIF(a.account_pnl, 0) * 100 AS pct_account_pnl,
-        p.current_value
-            / NULLIF(a.total_investment_cost, 0) * 100 AS pct_weight,
-        value_7d_ma,
-        value_30d_ma,
-        value_90d_ma,
-        value_180d_ma,
-        value_365d_ma
+        p.pnl / NULLIF(a.account_pnl, 0) * 100 AS account_pnl_pct,
+        p.current_value / NULLIF(a.total_investment_cost, 0) * 100 AS weight_pct,
+        avg_value_7d,
+        avg_value_30d,
+        avg_value_90d,
+        avg_value_180d,
+        avg_value_365d,
+        p.ingested_date AS ingested_date,
+        p.ingested_timestamp
     FROM daily_positions p
     INNER JOIN account_summary a
         ON p.ingested_date = a.ingested_date
@@ -449,7 +446,9 @@ def main(event) -> None:
     dim_asset = reconcile_unmapped_tickers(df_silver["ticker"], dim_asset)
     write_dim_asset(dim_asset)
     
-    new_dim_date_rows = build_dim_date(from_date, to_date)
+    current_date = datetime.now(timezone.utc).date()
+    
+    new_dim_date_rows = build_dim_date(from_date, current_date)
     dim_date = merge_dim_date(new_dim_date_rows)
     write_dim_date(dim_date)
 
@@ -477,8 +476,8 @@ def lambda_handler(event, context):
 
 if __name__ == "__main__":
     event = {
-    "from_date": "2026-08-15",
-    "to_date": "2026-08-25"
+    "from_date": "2026-06-15",
+    "to_date": "2026-10-25"
     }
     main(event)
 
