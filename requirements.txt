@@ -10,3 +10,4 @@ botocore
 botocore[crt]
 awswrangler
 ipykernel
+httpx

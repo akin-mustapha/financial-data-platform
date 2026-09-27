@@ -43,6 +43,17 @@ resource "aws_iam_role_policy" "financial_dataflow" {
           "arn:aws:s3:::aws-glue-assets-${var.aws_account_id}-${var.aws_region}",
           "arn:aws:s3:::aws-glue-assets-${var.aws_account_id}-${var.aws_region}/*"
         ]
+      },
+
+      {
+        Sid = "Lambda"
+        Effect = "Allow"
+        Action = [
+          "lambda:InvokeFunction"
+        ],
+        Resource = [
+          aws_lambda_function.pipeline["ingestion"].arn
+        ]
       }
     ]
   })
@@ -80,26 +91,39 @@ resource "aws_iam_role_policy" "lambda_pipeline" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "CloudWatchLogs"
+        Effect   = "Allow"
+        Action   = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = ["arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/aws/lambda/*"]
+      },
+      {
         Sid      = "Secrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = [aws_secretsmanager_secret.trading212.arn]
       },
       {
-        Sid      = "S3"
+        Sid      = "S3Bucket"
+        Effect   = "Allow"
+        Action   = [
+          "s3:ListBucket",
+          "s3:GetBucketLocation"
+        ]
+        Resource = [aws_s3_bucket.financial_dataflow.arn]
+      },
+      {
+        Sid      = "S3Objects"
         Effect   = "Allow"
         Action   = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:DeleteObject",
-          "s3:ListBucket",
-          "s3:GetBucketLocation"
+          "s3:DeleteObject"
         ]
-        Resource = [
-          "${aws_s3_bucket.financial_dataflow.arn}",
-          "${aws_s3_bucket.financial_dataflow.arn}/query-results",
-          "${aws_s3_bucket.financial_dataflow.arn}/*"
-        ]
+        Resource = ["${aws_s3_bucket.financial_dataflow.arn}/*"]
       },
       {
         Sid      = "Glue"
@@ -140,14 +164,25 @@ resource "aws_iam_role_policy" "lambda_pipeline" {
         ]
       },
       {
-        # Lambda Destinations (OnFailure) needs the invoking function's
-        # own role to allow Publish, in addition to the SNS topic's
-        # resource policy granting lambda.amazonaws.com -- both sides
-        # are required.
         Sid      = "PublishFailureAlerts"
         Effect   = "Allow"
         Action   = ["sns:Publish"]
         Resource = [aws_sns_topic.pipeline_alerts.arn]
+      },
+      {
+        Sid      = "DynamoDb"
+        Effect   = "Allow"
+        Action   = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:BatchGetItem",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan"
+        ]
+        Resource = [
+          aws_dynamodb_table.trade_log.arn  # Or "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/trade_log"
+        ]
       }
     ]
   })
