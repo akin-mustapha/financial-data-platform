@@ -21,7 +21,7 @@ resource "aws_sns_topic_policy" "pipeline_alerts" {
         Action    = "SNS:Publish"
         Resource  = aws_sns_topic.pipeline_alerts.arn
         Condition = {
-          ArnLike = { "aws:SourceArn" = aws_lambda_function.ingestion.arn }
+          ArnLike = { "aws:SourceArn" = aws_lambda_function.pipeline["ingestion"].arn }
         }
       },
       {
@@ -48,7 +48,7 @@ resource "aws_cloudwatch_metric_alarm" "ingestion_errors" {
   treat_missing_data  = "notBreaching"
 
   dimensions = {
-    FunctionName = aws_lambda_function.ingestion.function_name
+    FunctionName = aws_lambda_function.pipeline["ingestion"].function_name
   }
 
   alarm_actions = [aws_sns_topic.pipeline_alerts.arn]

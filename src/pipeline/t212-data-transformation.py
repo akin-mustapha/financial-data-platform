@@ -45,6 +45,7 @@ from typing import List, Optional
 
 import pandas as pd
 import awswrangler as wr
+from awswrangler.exceptions import NoFilesFound
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -74,12 +75,12 @@ def set_watermark(new_date: date) -> None:
     wr.s3.to_json(df=pd.DataFrame([{"last_processed_partition_date": new_date.isoformat()}]), path=STATE_PATH)
     logger.info("Watermark advanced to %s", new_date)
 
-def dates_to_process() -> List[date]:
-    if IS_BACKFILL:
-        start = pd.to_datetime(BACKFILL_ARGS.START_DATE).date()
+def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
+    if is_backfill:
+        start = pd.to_datetime(from_date).date()
         end = (
-            pd.to_datetime(BACKFILL_ARGS.END_DATE).date()
-            if BACKFILL_ARGS.END_DATE
+            pd.to_datetime(to_date).date()
+            if to_date
             else date.today()
         )
         logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
@@ -124,8 +125,11 @@ def read_bronze(path, dates: List[date]) -> pd.DataFrame:
             part_df["_bronze_partition_date"] = d.isoformat()
             frames.append(part_df)
             logger.info("Read partition %s (%d rows)", p, len(part_df))
-        except Exception:
+        except NoFilesFound as e:
             logger.warning("No bronze data found for partition %s, skipping", p)
+        except Exception:
+            raise e
+        
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
@@ -267,8 +271,13 @@ STATE_PATH = "s3://financial-dataflow/data/silver/trading212/_state/watermark.js
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
-def main() -> None:
-    dates = dates_to_process()
+def main(event) -> None:
+    
+    from_date = event.get("from_date")
+    to_date = event.get("to_date")
+    is_backfill = bool(from_date)
+    
+    dates = dates_to_process(from_date, to_date, is_backfill)
     logger.info(f"Processing data for {len(dates)} days")
     if not dates:
         logger.info("No new partitions to process. Exiting.")
@@ -293,7 +302,7 @@ def main() -> None:
         
         write_silver(df_silver, output_path, glue_database, glue_table)
 
-    if not IS_BACKFILL:
+    if not is_backfill:
         # Deliberately max(dates) - 1, not max(dates): today (always
         # the last entry in dates, see dates_to_process) must stay
         # reprocessable by later runs the same day, so the watermark
@@ -303,5 +312,21 @@ def main() -> None:
     logger.info("Job complete. Dates processed: %s", [d.isoformat() for d in dates])
 
 
+def lambda_handler(event, context):
+    main(event)
+    
+    return {
+        "statusCode": 200,
+        # "records": total_records,
+        # "endpoints": endpoint_metrics,
+        # "duration_seconds": round(total_duration, 2)
+    }
+    
+
 if __name__ == "__main__":
-    main()
+    event = {
+    "from_date": "2026-08-15",
+    "to_date": "2026-08-25"
+    }
+    main(event)
+    

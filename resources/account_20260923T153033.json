@@ -1,0 +1,18 @@
+{
+  "id": 21641310,
+  "currency": "EUR",
+  "totalValue": 10285.05,
+  "cash": {
+    "availableToTrade": 782.8,
+    "reservedForOrders": 0,
+    "inPies": 11.96
+  },
+  "investments": {
+    "currentValue": 9494.18,
+    "totalCost": 8288.77,
+    "realizedProfitLoss": 313.46,
+    "unrealizedProfitLoss": 1205.41
+  },
+  "ingested_timestamp": "2026-09-23 15:30:34.006963+00:00",
+  "ingested_date": "2026-09-23"
+}

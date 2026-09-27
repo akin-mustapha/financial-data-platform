@@ -2,3 +2,12 @@ pyspark
 requests
 black
 ruff
+xdk
+numpy
+pandas
+boto3
+botocore
+botocore[crt]
+awswrangler
+ipykernel
+httpx

@@ -10,7 +10,7 @@ resource "aws_scheduler_schedule" "europe_open" {
   schedule_expression_timezone = "Europe/Dublin"
 
   target {
-    arn      = aws_lambda_function.ingestion.arn
+    arn      = aws_lambda_function.pipeline["ingestion"].arn
     role_arn = aws_iam_role.financial_dataflow.arn
     input    = jsonencode({ run_type = "europe-open" })
 
@@ -33,7 +33,7 @@ resource "aws_scheduler_schedule" "midday" {
   schedule_expression_timezone = "Europe/Dublin"
 
   target {
-    arn      = aws_lambda_function.ingestion.arn
+    arn      = aws_lambda_function.pipeline["ingestion"].arn
     role_arn = aws_iam_role.financial_dataflow.arn
     input    = jsonencode({ run_type = "midday" })
 
@@ -56,7 +56,7 @@ resource "aws_scheduler_schedule" "us_close" {
   schedule_expression_timezone = "Europe/Dublin"
 
   target {
-    arn      = aws_lambda_function.ingestion.arn
+    arn      = aws_lambda_function.pipeline["ingestion"].arn
     role_arn = aws_iam_role.financial_dataflow.arn
     input    = jsonencode({ run_type = "us-close" })
 

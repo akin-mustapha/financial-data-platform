@@ -4,3 +4,4 @@ venv/**
 pycache__/
 **/.terraform
 **/.hcl
+terraform/build/**
