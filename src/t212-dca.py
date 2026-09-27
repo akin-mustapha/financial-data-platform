@@ -8,7 +8,7 @@ from uuid import uuid4
 import awswrangler as wr
 import boto3
 from botocore.exceptions import ClientError
-import httpx
+import requests
 
 # Logging Configuration
 logger = logging.getLogger()
@@ -58,7 +58,7 @@ def get_latest_position(ticker: str, database: str):
     """
     try:
         logger.info("Fetching position data for ticker: %s", ticker)
-        df = wr.athena.read_sql_query(sql=sql, database=database)
+        df = wr.athena.read_sql_query(sql=sql, database=database, s3_output="s3://financial-dataflow/query-results/")
         if df.empty:
             logger.warning("Athena query returned 0 rows for ticker: %s", ticker)
             return None
@@ -74,7 +74,7 @@ def get_latest_position(ticker: str, database: str):
 
 
 def execute_market_order(domain: str, endpoint: str, ticker: str, equity: float, api_token: str, secret_token: str):
-    """Trigger market order via Trading 212 API."""
+    """Trigger market order via Trading 212 API using requests."""
     credentials = f"{api_token}:{secret_token}"
     token = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
     
@@ -84,14 +84,12 @@ def execute_market_order(domain: str, endpoint: str, ticker: str, equity: float,
     }
     payload = {"ticker": ticker, "value": equity}
     url = urljoin(domain, endpoint)
-
     try:
         logger.info("Placing market order — Asset: %s, Equity: %s", ticker, equity)
-        with httpx.Client() as client:
-            response = client.post(url, json=payload, headers=headers, timeout=10.0)
-            response.raise_for_status()
-            return response.json() if response.content else {"status": "success"}
-    except httpx.HTTPError as e:
+        response = requests.post(url, json=payload, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        return response.json() if response.text else {"status": "success"}
+    except requests.exceptions.RequestException as e:
         logger.error("HTTP error during market order placement: %s", e)
         return None
 
