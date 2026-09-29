@@ -17,3 +17,7 @@ def test_load_current_holdings():
     # Assert that the most recent holding is returned
     assert current_holdings["Key"] == "data/bronze/trading212/positions/ingested_date=2026-09-14/file2.csv"
     assert current_holdings["LastModified"] == "2026-09-14T13:00:00Z"
+    
+    
+    
+    

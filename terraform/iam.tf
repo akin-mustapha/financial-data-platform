@@ -104,7 +104,10 @@ resource "aws_iam_role_policy" "lambda_pipeline" {
         Sid      = "Secrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_secretsmanager_secret.trading212.arn]
+        Resource = [
+          aws_secretsmanager_secret.trading212.arn,
+          "arn:aws:secretsmanager:eu-west-1:861580917950:secret:prod/financial/t212-dca-automation-UqUvlT"
+          ]
       },
       {
         Sid      = "S3Bucket"
