@@ -67,7 +67,8 @@ def get_secret(secret_id: str):
 
     except ClientError as e:
         logger.error(
-            "[get_secret] AWS Secrets Manager error: %s", e
+            "[get_secret] AWS Secrets Manager error: %s",
+            e,
         )
         raise
 
@@ -104,7 +105,8 @@ def fetch_endpoint(
       - "items":  payload is a paginated envelope: {"items": [...], ...}
     """
     logger.info(
-        "[fetch_endpoint] Fetching endpoint: %s", url
+        "[fetch_endpoint] Fetching endpoint: %s",
+        url,
     )
 
     start = time.perf_counter()
@@ -116,10 +118,16 @@ def fetch_endpoint(
     header = {"Authorization": f"Basic {token}"}
 
     try:
-        request = Request(url, headers=header, method="GET")
+        request = Request(
+            url, headers=header, method="GET"
+        )
 
-        with urlopen(request, timeout=10) as response:
-            payload = response.read().decode("utf-8")
+        with urlopen(
+            request, timeout=10
+        ) as response:
+            payload = response.read().decode(
+                "utf-8"
+            )
             result = json.loads(payload)
 
         if isinstance(result, list):
@@ -249,7 +257,7 @@ def save_to_s3(
 
 def main(event, context):
     logger.info("=" * 60)
-    logger.info("Trading212 Pipeline Execution")
+    logger.info("Trading212 Ingestion Execution")
     logger.info("=" * 60)
 
     pipeline_start = time.perf_counter()
@@ -258,17 +266,13 @@ def main(event, context):
     # Secrets
     # ---------------------------------------------------------
 
-    API_TOKEN, SECRET_TOKEN = get_secret(secret_id)
+    API_TOKEN, SECRET_TOKEN = get_secret(
+        secret_id
+    )
 
     # ---------------------------------------------------------
     # Trading212 API
     # ---------------------------------------------------------
-
-    # credentials = f"{API_TOKEN}:{SECRET_TOKEN}"
-
-    # token = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
-
-    # header = {"Authorization": f"Basic {token}"}
 
     # Per-endpoint metrics, keyed by endpoint name, so nothing gets
     # overwritten when there's more than one endpoint in _ENDPOINTS.
@@ -280,12 +284,17 @@ def main(event, context):
 
         endpoint = v.get("endpoint")
         bucket_name = v.get("bucket_name")
-        response_shape = v.get("response_shape", "list")
+        response_shape = v.get(
+            "response_shape", "list"
+        )
 
         url = urljoin(f"{API_URL}/", endpoint)
 
         res, api_duration = fetch_endpoint(
-            url, API_TOKEN, SECRET_TOKEN, response_shape
+            url,
+            API_TOKEN,
+            SECRET_TOKEN,
+            response_shape,
         )
 
         record_count = len(res)
@@ -306,7 +315,9 @@ def main(event, context):
             f"{now.strftime('%Y%m%dT%H%M%S')}.json"
         )
 
-        s3_duration = save_to_s3(res, bucket_name, key)
+        s3_duration = save_to_s3(
+            res, bucket_name, key
+        )
 
         endpoint_metrics[k] = {
             "records": record_count,
@@ -318,9 +329,12 @@ def main(event, context):
     # Execution Summary
     # ---------------------------------------------------------
 
-    total_duration = time.perf_counter() - pipeline_start
+    total_duration = (
+        time.perf_counter() - pipeline_start
+    )
     total_records = sum(
-        m["records"] for m in endpoint_metrics.values()
+        m["records"]
+        for m in endpoint_metrics.values()
     )
 
     logger.info("")
@@ -347,7 +361,7 @@ def main(event, context):
 
     logger.info("=" * 60)
     logger.info(
-        "Trading212 Pipeline Completed Successfully"
+        "Trading212 Ingestion Completed Successfully"
     )
     logger.info("=" * 60)
 
@@ -355,7 +369,9 @@ def main(event, context):
         "statusCode": 200,
         "records": total_records,
         "endpoints": endpoint_metrics,
-        "duration_seconds": round(total_duration, 2),
+        "duration_seconds": round(
+            total_duration, 2
+        ),
     }
 
 

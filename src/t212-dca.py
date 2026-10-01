@@ -40,7 +40,9 @@ EQUITY = 5
 MAX_DRAWDOWN_THRESHOLD = -1.0
 MIN_DRAWDOWN_THRESHOLD = -2.5
 
-NOTIFICATION_EMAIL = "akinkunmimustapha1@gmail.com"
+NOTIFICATION_EMAIL = (
+    "akinkunmimustapha1@gmail.com"
+)
 
 session = boto3.session.Session()
 
@@ -78,7 +80,8 @@ def get_secret(secret_id: str):
 
     except ClientError as e:
         logger.error(
-            "[get_secret] AWS Secrets Manager error: %s", e
+            "[get_secret] AWS Secrets Manager error: %s",
+            e,
         )
         raise
 
@@ -97,7 +100,9 @@ def get_secret(secret_id: str):
     )
 
 
-def get_latest_position(ticker: str, database: str):
+def get_latest_position(
+    ticker: str, database: str
+):
     """Fetch latest position metrics and current price from Athena."""
 
     logger.info(
@@ -140,7 +145,9 @@ def get_latest_position(ticker: str, database: str):
 
         return {
             "change_pct": float(
-                df["daily_value_change_pct"].iloc[0]
+                df["daily_value_change_pct"].iloc[
+                    0
+                ]
             ),
             "current_value": float(
                 df["current_value"].iloc[0]
@@ -170,7 +177,10 @@ def execute_market_order(
     logger.info(
         "[execute_market_order] Executing market order: %s",
         endpoint,
-        extra={"domain": domain, "endpoint": endpoint},
+        extra={
+            "domain": domain,
+            "endpoint": endpoint,
+        },
     )
 
     credentials = f"{api_token}:{secret_token}"
@@ -185,7 +195,9 @@ def execute_market_order(
     }
 
     url = urljoin(domain, endpoint)
-    json_data = json.dumps(payload).encode("utf-8")
+    json_data = json.dumps(payload).encode(
+        "utf-8"
+    )
 
     try:
 
@@ -197,10 +209,14 @@ def execute_market_order(
         )
 
         with urlopen(
-            request, timeout=10, context=ssl_context
+            request,
+            timeout=10,
+            context=ssl_context,
         ) as response:
 
-            res_body = response.read().decode("utf-8")
+            res_body = response.read().decode(
+                "utf-8"
+            )
 
             logger.info(
                 "[execute_market_order] SUCCESS",
@@ -231,7 +247,8 @@ def execute_market_order(
 
     except URLError as e:
         logger.error(
-            "[execute_market_order] Network error: %s", e
+            "[execute_market_order] Network error: %s",
+            e,
         )
 
         return None
@@ -265,9 +282,13 @@ def log_trade(
         "asset": ticker,
         "value": value,
         "quantity": (
-            str(round(quantity, 6)) if quantity else ""
+            str(round(quantity, 6))
+            if quantity
+            else ""
         ),
-        "additional_info": json.dumps(order_result),
+        "additional_info": json.dumps(
+            order_result
+        ),
         "created_datetime": datetime.now(
             timezone.utc
         ).isoformat(),
@@ -279,7 +300,8 @@ def log_trade(
         return trade
     except Exception as e:
         logger.error(
-            "[log_trade] DynamoDB write failed: %s", e
+            "[log_trade] DynamoDB write failed: %s",
+            e,
         )
         return None
 
@@ -378,7 +400,9 @@ def main(event=None, context=None):
     logger.info("=" * 60)
 
     # 1. Credentials
-    api_token, secret_token = get_secret(SECRET_NAME)
+    api_token, secret_token = get_secret(
+        SECRET_NAME
+    )
     if not api_token:
         return {
             "statusCode": 500,
@@ -386,7 +410,9 @@ def main(event=None, context=None):
         }
 
     # 2. Athena Position Data
-    metrics = get_latest_position(TICKER, DATABASE)
+    metrics = get_latest_position(
+        TICKER, DATABASE
+    )
     if not metrics:
         return {
             "statusCode": 500,
@@ -405,7 +431,8 @@ def main(event=None, context=None):
         else 0.0
     )
     logger.info(
-        "Calculated quantity: %s", calculated_quantity
+        "Calculated quantity: %s",
+        calculated_quantity,
     )
 
     # 3. DCA Rule Checks
@@ -444,7 +471,11 @@ def main(event=None, context=None):
     }
 
     order_result = execute_market_order(
-        DOMAIN, ENDPOINT, api_token, secret_token, payload
+        DOMAIN,
+        ENDPOINT,
+        api_token,
+        secret_token,
+        payload,
     )
 
     if not order_result:
@@ -482,6 +513,11 @@ def main(event=None, context=None):
         logger.warning(
             "Trade was executed, but notification failed."
         )
+
+    logger.info("")
+    logger.info("-" * 60)
+    logger.info("END Trading212 DCA Execution")
+    logger.info("-" * 60)
 
     return {
         "statusCode": 200,

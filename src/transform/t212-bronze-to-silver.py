@@ -67,7 +67,9 @@ _parser.add_argument(
     help="YYYY-MM-DD, backfill end (inclusive). Defaults to today if omitted.",
 )
 
-BACKFILL_ARGS, _ = _parser.parse_known_args(sys.argv[1:])
+BACKFILL_ARGS, _ = _parser.parse_known_args(
+    sys.argv[1:]
+)
 IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
 
 
@@ -76,9 +78,13 @@ IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
 # ---------------------------------------------------------------------
 def get_watermark() -> Optional[date]:
     try:
-        state = wr.s3.read_json(STATE_PATH, lines=False)
+        state = wr.s3.read_json(
+            STATE_PATH, lines=False
+        )
         return pd.to_datetime(
-            state["last_processed_partition_date"].iloc[0]
+            state[
+                "last_processed_partition_date"
+            ].iloc[0]
         ).date()
     except Exception:
         logger.info(
@@ -99,7 +105,9 @@ def set_watermark(new_date: date) -> None:
         ),
         path=STATE_PATH,
     )
-    logger.info("Watermark advanced to %s", new_date)
+    logger.info(
+        "Watermark advanced to %s", new_date
+    )
 
 
 def dates_to_process() -> List[date]:
@@ -108,7 +116,9 @@ def dates_to_process() -> List[date]:
             BACKFILL_ARGS.START_DATE
         ).date()
         end = (
-            pd.to_datetime(BACKFILL_ARGS.END_DATE).date()
+            pd.to_datetime(
+                BACKFILL_ARGS.END_DATE
+            ).date()
             if BACKFILL_ARGS.END_DATE
             else date.today()
         )
@@ -132,7 +142,9 @@ def dates_to_process() -> List[date]:
     start = (
         today
         if watermark is None
-        else min(watermark + timedelta(days=1), today)
+        else min(
+            watermark + timedelta(days=1), today
+        )
     )
     return [
         start + timedelta(days=i)
@@ -143,7 +155,9 @@ def dates_to_process() -> List[date]:
 # ---------------------------------------------------------------------
 # Read / transform / write
 # ---------------------------------------------------------------------
-def read_bronze(path, dates: List[date]) -> pd.DataFrame:
+def read_bronze(
+    path, dates: List[date]
+) -> pd.DataFrame:
     """
     Read JSON objects for the given dates.
 
@@ -164,7 +178,9 @@ def read_bronze(path, dates: List[date]) -> pd.DataFrame:
     for d in dates:
         p = f"{path}{d.year}/{d.month:02d}/{d.day:02d}/"
         try:
-            part_df = wr.s3.read_json(path=p, lines=True)
+            part_df = wr.s3.read_json(
+                path=p, lines=True
+            )
             part_df["_bronze_partition_date"] = (
                 d.isoformat()
             )
@@ -183,13 +199,17 @@ def read_bronze(path, dates: List[date]) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
     logger.info(
-        "Total bronze row count for this run: %d", len(df)
+        "Total bronze row count for this run: %d",
+        len(df),
     )
     return df
 
 
 def write_silver(
-    df: pd.DataFrame, path: str, database: str, table: str
+    df: pd.DataFrame,
+    path: str,
+    database: str,
+    table: str,
 ) -> None:
     """Write partitioned Parquet and register/update the Glue Catalog table."""
     logger.info(
@@ -208,7 +228,9 @@ def write_silver(
     )
 
 
-def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
+def transform_positions(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     """Flatten nested instrument/walletImpact objects and cast types."""
     logger.info("Flattening nested JSON columns")
     flat = pd.json_normalize(
@@ -255,16 +277,22 @@ def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
             "ticker": col("instrument.ticker"),
             "isin": col("instrument.isin"),
             "created_at": pd.to_datetime(
-                col("createdAt"), utc=True, errors="coerce"
+                col("createdAt"),
+                utc=True,
+                errors="coerce",
             ),
-            "asset_currency": col("instrument.currency"),
+            "asset_currency": col(
+                "instrument.currency"
+            ),
             "avg_price_paid": col(
                 "averagePricePaid"
             ).astype("float64"),
-            "current_price": col("currentPrice").astype(
+            "current_price": col(
+                "currentPrice"
+            ).astype("float64"),
+            "quantity": col("quantity").astype(
                 "float64"
             ),
-            "quantity": col("quantity").astype("float64"),
             "quantity_available_for_trading": col(
                 "quantityAvailableForTrading"
             ).astype("float64"),
@@ -372,7 +400,8 @@ def transform_account_summary(
                 errors="coerce",
             ),
             "ingested_date": pd.to_datetime(
-                col("ingested_date"), errors="coerce"
+                col("ingested_date"),
+                errors="coerce",
             ).dt.date,
         }
     )
@@ -407,7 +436,9 @@ STATE_PATH = "s3://financial-dataflow/data/silver/trading212/_state/watermark.js
 # ---------------------------------------------------------------------
 def main() -> None:
     dates = dates_to_process()
-    logger.info(f"Processing data for {len(dates)} days")
+    logger.info(
+        f"Processing data for {len(dates)} days"
+    )
     if not dates:
         logger.info(
             "No new partitions to process. Exiting."
@@ -417,7 +448,9 @@ def main() -> None:
     for key, mapping in CONFIG.items():
         input_path = mapping.get("input_path")
         output_path = mapping.get("output_path")
-        glue_database = mapping.get("glue_database")
+        glue_database = mapping.get(
+            "glue_database"
+        )
         glue_table = mapping.get("glue_table")
 
         logger.info(f"Reading {key} bronze data")
@@ -444,7 +477,9 @@ def main() -> None:
         # the last entry in dates, see dates_to_process) must stay
         # reprocessable by later runs the same day, so the watermark
         # only ever marks days that are fully in the past.
-        set_watermark(max(dates) - timedelta(days=1))
+        set_watermark(
+            max(dates) - timedelta(days=1)
+        )
 
     logger.info(
         "Job complete. Dates processed: %s",
