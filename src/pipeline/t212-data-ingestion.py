@@ -154,9 +154,7 @@ def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
             key,
         )
 
-        client.put_object(
-            Bucket=bucket_name, Key=key, Body=body, ContentType="application/json"
-        )
+        client.put_object(Bucket=bucket_name, Key=key, Body=body, ContentType="application/json")
 
         duration = time.perf_counter() - start
 
@@ -186,8 +184,7 @@ def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
         )
 
         logger.error(
-            "[S3] Data written to dead-letter location | "
-            "destination=s3://%s/dead-letters/%s",
+            "[S3] Data written to dead-letter location | " "destination=s3://%s/dead-letters/%s",
             bucket_name,
             key,
         )

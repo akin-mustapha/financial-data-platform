@@ -25,20 +25,21 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Configuration Constants
+SES_REGION = "eu-west-1"
+SECRET_NAME = "prod/financial/t212-dca-automation"
+
 DATABASE = "financials"
 TRADE_LOG_TABLE_NAME = "trade_log"
-SECRET_NAME = "prod/financial/t212-dca-automation"
+
 DOMAIN = "https://live.trading212.com/api/v0/"
 ENDPOINT = "equity/orders/market"
-NOTIFICATION_EMAIL = "akinkunmimustapha1@gmail.com"
-SES_REGION = "eu-west-1"
-
 
 TICKER = "VWRPl_EQ"
 EQUITY = 5
 MAX_DRAWDOWN_THRESHOLD = -1.0
 MIN_DRAWDOWN_THRESHOLD = -2.5
 
+NOTIFICATION_EMAIL = "akinkunmimustapha1@gmail.com"
 
 # ==========================================
 # HELPER FUNCTIONS
@@ -83,9 +84,7 @@ def get_latest_position(ticker: str, database: str):
 
         # Extract current_price column if available in fact table
         current_price = (
-            float(df["current_price"].iloc[0])
-            if "current_price" in df.columns
-            else None
+            float(df["current_price"].iloc[0]) if "current_price" in df.columns else None
         )
 
         return {
@@ -148,9 +147,7 @@ def execute_market_order(
         return None
 
 
-def log_trade(
-    table_name: str, ticker: str, value: float, quantity: float, order_result
-):
+def log_trade(table_name: str, ticker: str, value: float, quantity: float, order_result):
     """Record executed trade entry with calculated quantity into DynamoDB."""
     trade = {
         "trade_id": str(uuid4()),
@@ -275,9 +272,7 @@ def main(event=None, context=None):
     current_price = metrics.get("current_price")
 
     # Calculate expected quantity: Quantity = Equity Amount / Current Price
-    calculated_quantity = (
-        (EQUITY / current_price) if (current_price and current_price > 0) else 0.0
-    )
+    calculated_quantity = (EQUITY / current_price) if (current_price and current_price > 0) else 0.0
     logger.info("Calculated quantity: %s", calculated_quantity)
 
     # 3. DCA Rule Checks
@@ -305,9 +300,7 @@ def main(event=None, context=None):
         "extendedHours": False,
     }
 
-    order_result = execute_market_order(
-        DOMAIN, ENDPOINT, api_token, secret_token, payload
-    )
+    order_result = execute_market_order(DOMAIN, ENDPOINT, api_token, secret_token, payload)
 
     if not order_result:
         return {"statusCode": 500, "body": "Market order execution failed"}

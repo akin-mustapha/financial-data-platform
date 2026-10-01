@@ -68,9 +68,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # Optional backfill window, parsed separately from getResolvedOptions
 # since getResolvedOptions treats every listed arg as required.
 _parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument(
-    "--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)"
-)
+_parser.add_argument("--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)")
 _parser.add_argument(
     "--END_DATE",
     default=None,
@@ -88,9 +86,7 @@ def get_watermark() -> Optional[date]:
         state = wr.s3.read_json(STATE_PATH, lines=False)
         return pd.to_datetime(state["last_processed_date"].iloc[0]).date()
     except Exception:
-        logger.info(
-            "No watermark found at %s — treating this as the first run", STATE_PATH
-        )
+        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
         return None
 
 
@@ -110,9 +106,7 @@ def dates_to_process() -> List[date]:
             if BACKFILL_ARGS.END_DATE
             else date.today()
         )
-        logger.info(
-            "Backfill mode: %s to %s (watermark will NOT be updated)", start, end
-        )
+        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
         return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # today is always included and reprocessed, even if the watermark
@@ -197,9 +191,7 @@ DEFAULT_ASSET = {
 }
 
 
-def reconcile_unmapped_tickers(
-    fact_tickers: pd.Series, dim_asset: pd.DataFrame
-) -> pd.DataFrame:
+def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame) -> pd.DataFrame:
     """Append placeholder dim_asset rows for tickers seen in silver but
     absent from asset_mapping.json, so fact_positions never references
     a ticker that doesn't exist in dim_asset."""
@@ -303,9 +295,7 @@ def collapse_to_daily(df: pd.DataFrame) -> pd.DataFrame:
     return daily
 
 
-def build_fact_positions(
-    df_silver: pd.DataFrame, df_lookback: pd.DataFrame
-) -> pd.DataFrame:
+def build_fact_positions(df_silver: pd.DataFrame, df_lookback: pd.DataFrame) -> pd.DataFrame:
     """Narrow silver down to the fact grain: FKs + measures only.
     Asset attributes (name, sector, industry, ...) live in dim_asset
     and are reached via a join on ticker, not duplicated here.
@@ -321,27 +311,23 @@ def build_fact_positions(
         "asset_currency",
     ] + FACT_MEASURE_COLS
     target_dates = set(df_silver["ingested_date"])
-    lookback = (
-        df_lookback[cols] if not df_lookback.empty else pd.DataFrame(columns=cols)
-    )
+    lookback = df_lookback[cols] if not df_lookback.empty else pd.DataFrame(columns=cols)
     combined = pd.concat([lookback, df_silver[cols]], ignore_index=True).copy()
     combined = collapse_to_daily(combined)
     combined = combined.sort_values(["ticker", "ingested_date"])
 
     # NaN (not 0) when total_cost is 0/missing -- a 0% return would be
     # indistinguishable from an actual break-even position otherwise.
-    combined["unrealized_profit_loss_pct"] = combined[
-        "unrealized_profit_loss"
-    ] / combined["total_cost"].replace(0, pd.NA)
+    combined["unrealized_profit_loss_pct"] = combined["unrealized_profit_loss"] / combined[
+        "total_cost"
+    ].replace(0, pd.NA)
 
     # Prior day's close per ticker. NaN (not 0) when there's no prior
     # day in scope (asset's first day, or a gap) -- a missing prior
     # close must not be read as a 0 price / -100% return.
     prev_close = combined.groupby("ticker")["close_price"].shift(1)
     combined["price_change"] = combined["close_price"] - prev_close
-    combined["daily_return_pct"] = combined["price_change"] / prev_close.replace(
-        0, pd.NA
-    )
+    combined["daily_return_pct"] = combined["price_change"] / prev_close.replace(0, pd.NA)
 
     fact = combined[combined["ingested_date"].isin(target_dates)].copy()
     fact["date_id"] = to_date_id(fact["ingested_date"])
@@ -349,9 +335,7 @@ def build_fact_positions(
 
 
 def write_fact_positions(df: pd.DataFrame) -> None:
-    logger.info(
-        "Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH
-    )
+    logger.info("Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH)
     wr.s3.to_parquet(
         df=df,
         path=FACT_PATH,
@@ -364,9 +348,7 @@ def write_fact_positions(df: pd.DataFrame) -> None:
 
 
 def write_dim_asset(df: pd.DataFrame) -> None:
-    logger.info(
-        "Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH
-    )
+    logger.info("Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH)
     wr.s3.to_parquet(
         df=df,
         path=DIM_ASSET_PATH,

@@ -70,9 +70,7 @@ def get_watermark() -> Optional[date]:
         state = wr.s3.read_json(STATE_PATH, lines=False)
         return pd.to_datetime(state["last_processed_date"].iloc[0]).date()
     except Exception:
-        logger.info(
-            "No watermark found at %s — treating this as the first run", STATE_PATH
-        )
+        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
         return None
 
 
@@ -88,9 +86,7 @@ def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
     if is_backfill:
         start = pd.to_datetime(from_date).date()
         end = pd.to_datetime(to_date).date() if to_date else date.today()
-        logger.info(
-            "Backfill mode: %s to %s (watermark will NOT be updated)", start, end
-        )
+        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
         return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # today is always included and reprocessed, even if the watermark
@@ -175,9 +171,7 @@ DEFAULT_ASSET = {
 }
 
 
-def reconcile_unmapped_tickers(
-    fact_tickers: pd.Series, dim_asset: pd.DataFrame
-) -> pd.DataFrame:
+def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame) -> pd.DataFrame:
     """Append placeholder dim_asset rows for tickers seen in silver but
     absent from asset_mapping.json, so fact_positions never references
     a ticker that doesn't exist in dim_asset."""
@@ -398,9 +392,7 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
 
 
 def write_fact_positions(df: pd.DataFrame) -> None:
-    logger.info(
-        "Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH
-    )
+    logger.info("Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH)
     wr.s3.to_parquet(
         df=df,
         path=FACT_PATH,
@@ -413,9 +405,7 @@ def write_fact_positions(df: pd.DataFrame) -> None:
 
 
 def write_dim_asset(df: pd.DataFrame) -> None:
-    logger.info(
-        "Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH
-    )
+    logger.info("Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH)
     wr.s3.to_parquet(
         df=df,
         path=DIM_ASSET_PATH,

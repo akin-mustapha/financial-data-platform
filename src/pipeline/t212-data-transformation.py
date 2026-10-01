@@ -54,9 +54,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # Optional backfill window, parsed separately from getResolvedOptions
 # since getResolvedOptions treats every listed arg as required.
 _parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument(
-    "--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)"
-)
+_parser.add_argument("--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)")
 _parser.add_argument(
     "--END_DATE",
     default=None,
@@ -75,9 +73,7 @@ def get_watermark() -> Optional[date]:
         state = wr.s3.read_json(STATE_PATH, lines=False)
         return pd.to_datetime(state["last_processed_partition_date"].iloc[0]).date()
     except Exception:
-        logger.info(
-            "No watermark found at %s — treating this as the first run", STATE_PATH
-        )
+        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
         return None
 
 
@@ -93,9 +89,7 @@ def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
     if is_backfill:
         start = pd.to_datetime(from_date).date()
         end = pd.to_datetime(to_date).date() if to_date else date.today()
-        logger.info(
-            "Backfill mode: %s to %s (watermark will NOT be updated)", start, end
-        )
+        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
         return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # today is always included and reprocessed, even if the watermark
@@ -203,23 +197,17 @@ def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
             "avg_price_paid": col("averagePricePaid").astype("float64"),
             "current_price": col("currentPrice").astype("float64"),
             "quantity": col("quantity").astype("float64"),
-            "quantity_available_for_trading": col("quantityAvailableForTrading").astype(
-                "float64"
-            ),
+            "quantity_available_for_trading": col("quantityAvailableForTrading").astype("float64"),
             "quantity_in_pies": col("quantityInPies").astype("float64"),
             "account_currency": col("walletImpact.currency"),
             "current_value": col("walletImpact.currentValue").astype("float64"),
             "fx_impact": col("walletImpact.fxImpact").astype("float64"),
             "total_cost": col("walletImpact.totalCost").astype("float64"),
-            "unrealized_profit_loss": col("walletImpact.unrealizedProfitLoss").astype(
-                "float64"
-            ),
+            "unrealized_profit_loss": col("walletImpact.unrealizedProfitLoss").astype("float64"),
             "ingested_timestamp": pd.to_datetime(
                 col("ingested_timestamp"), utc=True, errors="coerce"
             ),
-            "ingested_date": pd.to_datetime(
-                col("_bronze_partition_date"), errors="coerce"
-            ).dt.date,
+            "ingested_date": pd.to_datetime(col("_bronze_partition_date"), errors="coerce").dt.date,
         }
     )
     return result
@@ -269,9 +257,7 @@ def transform_account_summary(df: pd.DataFrame) -> pd.DataFrame:
             "ingested_timestamp": pd.to_datetime(
                 col("ingested_timestamp"), utc=True, errors="coerce"
             ),
-            "ingested_date": pd.to_datetime(
-                col("ingested_date"), errors="coerce"
-            ).dt.date,
+            "ingested_date": pd.to_datetime(col("ingested_date"), errors="coerce").dt.date,
         }
     )
     return result
@@ -325,9 +311,7 @@ def main(event) -> None:
         df_bronze = read_bronze(input_path, dates)
 
         if df_bronze.empty:
-            logger.info(
-                f"No {key} bronze data found for target dates. Exiting without writing."
-            )
+            logger.info(f"No {key} bronze data found for target dates. Exiting without writing.")
             continue
 
         transform = mapping.get("transform")
