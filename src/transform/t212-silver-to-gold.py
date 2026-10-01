@@ -30,6 +30,7 @@ Job setup (Python Shell, not Spark):
     --additional-python-modules  awswrangler==3.*,pandas,pyarrow
 - Max capacity: 0.0625 or 1 DPU is plenty at this data volume.
 """
+
 import sys
 import json
 import argparse
@@ -45,7 +46,7 @@ from awsglue.utils import getResolvedOptions
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
-INPUT_PATH = "s3://financial-dataflow/data/silver/trading212/positions/"   # ingested_date=YYYY-MM-DD/ partitions
+INPUT_PATH = "s3://financial-dataflow/data/silver/trading212/positions/"  # ingested_date=YYYY-MM-DD/ partitions
 STATE_PATH = "s3://financial-dataflow/data/gold/_state/positions_gold_watermark.json"
 MAPPING_BUCKET = "financial-dataflow"
 MAPPING_KEY = "resources/asset_mapping.json"
@@ -68,7 +69,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # since getResolvedOptions treats every listed arg as required.
 _parser = argparse.ArgumentParser(add_help=False)
 _parser.add_argument("--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)")
-_parser.add_argument("--END_DATE", default=None, help="YYYY-MM-DD, backfill end (inclusive). Defaults to today if omitted.")
+_parser.add_argument(
+    "--END_DATE",
+    default=None,
+    help="YYYY-MM-DD, backfill end (inclusive). Defaults to today if omitted.",
+)
 BACKFILL_ARGS, _ = _parser.parse_known_args(sys.argv[1:])
 IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
 
@@ -86,7 +91,10 @@ def get_watermark() -> Optional[date]:
 
 
 def set_watermark(new_date: date) -> None:
-    wr.s3.to_json(df=pd.DataFrame([{"last_processed_date": new_date.isoformat()}]), path=STATE_PATH)
+    wr.s3.to_json(
+        df=pd.DataFrame([{"last_processed_date": new_date.isoformat()}]),
+        path=STATE_PATH,
+    )
     logger.info("Watermark advanced to %s", new_date)
 
 
@@ -192,7 +200,11 @@ def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame)
     if not unmapped:
         return dim_asset
 
-    logger.warning("%d ticker(s) in silver have no asset mapping entry: %s", len(unmapped), unmapped)
+    logger.warning(
+        "%d ticker(s) in silver have no asset mapping entry: %s",
+        len(unmapped),
+        unmapped,
+    )
     placeholders = pd.DataFrame([{"ticker": t, **DEFAULT_ASSET} for t in unmapped])
     return pd.concat([dim_asset, placeholders], ignore_index=True)
 
@@ -217,18 +229,20 @@ def to_date_id(dates) -> pd.Series:
 def build_dim_date(start: date, end: date) -> pd.DataFrame:
     """Standard calendar dimension, one row per day in [start, end]."""
     days = pd.date_range(start, end, freq="D")
-    return pd.DataFrame({
-        "date_id": to_date_id(days),
-        "full_date": days.date,
-        "year": days.year,
-        "month": days.month,
-        "month_name": days.strftime("%B"),
-        "day": days.day,
-        "day_of_week": days.dayofweek,  # Monday=0
-        "day_name": days.strftime("%A"),
-        "quarter": days.quarter,
-        "is_weekend": days.dayofweek >= 5,
-    })
+    return pd.DataFrame(
+        {
+            "date_id": to_date_id(days),
+            "full_date": days.date,
+            "year": days.year,
+            "month": days.month,
+            "month_name": days.strftime("%B"),
+            "day": days.day,
+            "day_of_week": days.dayofweek,  # Monday=0
+            "day_name": days.strftime("%A"),
+            "quarter": days.quarter,
+            "is_weekend": days.dayofweek >= 5,
+        }
+    )
 
 
 def merge_dim_date(new_rows: pd.DataFrame) -> pd.DataFrame:
@@ -290,7 +304,12 @@ def build_fact_positions(df_silver: pd.DataFrame, df_lookback: pd.DataFrame) -> 
     in main via read_silver_lookback_day) purely so price_change /
     daily_return_pct have a previous close to diff against on
     incremental runs; its rows are dropped again before returning."""
-    cols = ["ticker", "ingested_date", "ingested_timestamp", "asset_currency"] + FACT_MEASURE_COLS
+    cols = [
+        "ticker",
+        "ingested_date",
+        "ingested_timestamp",
+        "asset_currency",
+    ] + FACT_MEASURE_COLS
     target_dates = set(df_silver["ingested_date"])
     lookback = df_lookback[cols] if not df_lookback.empty else pd.DataFrame(columns=cols)
     combined = pd.concat([lookback, df_silver[cols]], ignore_index=True).copy()
@@ -299,9 +318,9 @@ def build_fact_positions(df_silver: pd.DataFrame, df_lookback: pd.DataFrame) -> 
 
     # NaN (not 0) when total_cost is 0/missing -- a 0% return would be
     # indistinguishable from an actual break-even position otherwise.
-    combined["unrealized_profit_loss_pct"] = (
-        combined["unrealized_profit_loss"] / combined["total_cost"].replace(0, pd.NA)
-    )
+    combined["unrealized_profit_loss_pct"] = combined["unrealized_profit_loss"] / combined[
+        "total_cost"
+    ].replace(0, pd.NA)
 
     # Prior day's close per ticker. NaN (not 0) when there's no prior
     # day in scope (asset's first day, or a gap) -- a missing prior

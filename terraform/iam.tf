@@ -104,7 +104,10 @@ resource "aws_iam_role_policy" "lambda_pipeline" {
         Sid      = "Secrets"
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
-        Resource = [aws_secretsmanager_secret.trading212.arn]
+        Resource = [
+          aws_secretsmanager_secret.trading212.arn,
+          "arn:aws:secretsmanager:eu-west-1:861580917950:secret:prod/financial/t212-dca-automation-UqUvlT"
+          ]
       },
       {
         Sid      = "S3Bucket"
@@ -183,6 +186,15 @@ resource "aws_iam_role_policy" "lambda_pipeline" {
         Resource = [
           aws_dynamodb_table.trade_log.arn  # Or "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/trade_log"
         ]
+      },
+      {
+        Sid    = "SESAccess"
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = "*"
       }
     ]
   })
