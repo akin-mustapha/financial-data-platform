@@ -48,12 +48,19 @@ import pandas as pd
 import awswrangler as wr
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 # Optional backfill window, parsed separately from getResolvedOptions
 # since getResolvedOptions treats every listed arg as required.
 _parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument("--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)")
+_parser.add_argument(
+    "--START_DATE",
+    default=None,
+    help="YYYY-MM-DD, backfill start (inclusive)",
+)
 _parser.add_argument(
     "--END_DATE",
     default=None,
@@ -70,15 +77,26 @@ IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
 def get_watermark() -> Optional[date]:
     try:
         state = wr.s3.read_json(STATE_PATH, lines=False)
-        return pd.to_datetime(state["last_processed_partition_date"].iloc[0]).date()
+        return pd.to_datetime(
+            state["last_processed_partition_date"].iloc[0]
+        ).date()
     except Exception:
-        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
+        logger.info(
+            "No watermark found at %s — treating this as the first run",
+            STATE_PATH,
+        )
         return None
 
 
 def set_watermark(new_date: date) -> None:
     wr.s3.to_json(
-        df=pd.DataFrame([{"last_processed_partition_date": new_date.isoformat()}]),
+        df=pd.DataFrame(
+            [
+                {
+                    "last_processed_partition_date": new_date.isoformat()
+                }
+            ]
+        ),
         path=STATE_PATH,
     )
     logger.info("Watermark advanced to %s", new_date)
@@ -86,14 +104,23 @@ def set_watermark(new_date: date) -> None:
 
 def dates_to_process() -> List[date]:
     if IS_BACKFILL:
-        start = pd.to_datetime(BACKFILL_ARGS.START_DATE).date()
+        start = pd.to_datetime(
+            BACKFILL_ARGS.START_DATE
+        ).date()
         end = (
             pd.to_datetime(BACKFILL_ARGS.END_DATE).date()
             if BACKFILL_ARGS.END_DATE
             else date.today()
         )
-        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
-        return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        logger.info(
+            "Backfill mode: %s to %s (watermark will NOT be updated)",
+            start,
+            end,
+        )
+        return [
+            start + timedelta(days=i)
+            for i in range((end - start).days + 1)
+        ]
 
     # today is always included and reprocessed, even if the watermark
     # already covers it -- the Lambda ingests up to three times a day
@@ -102,8 +129,15 @@ def dates_to_process() -> List[date]:
     # partitions makes re-flattening it each run safe.
     watermark = get_watermark()
     today = date.today()
-    start = today if watermark is None else min(watermark + timedelta(days=1), today)
-    return [start + timedelta(days=i) for i in range((today - start).days + 1)]
+    start = (
+        today
+        if watermark is None
+        else min(watermark + timedelta(days=1), today)
+    )
+    return [
+        start + timedelta(days=i)
+        for i in range((today - start).days + 1)
+    ]
 
 
 # ---------------------------------------------------------------------
@@ -131,21 +165,38 @@ def read_bronze(path, dates: List[date]) -> pd.DataFrame:
         p = f"{path}{d.year}/{d.month:02d}/{d.day:02d}/"
         try:
             part_df = wr.s3.read_json(path=p, lines=True)
-            part_df["_bronze_partition_date"] = d.isoformat()
+            part_df["_bronze_partition_date"] = (
+                d.isoformat()
+            )
             frames.append(part_df)
-            logger.info("Read partition %s (%d rows)", p, len(part_df))
+            logger.info(
+                "Read partition %s (%d rows)",
+                p,
+                len(part_df),
+            )
         except Exception:
-            logger.warning("No bronze data found for partition %s, skipping", p)
+            logger.warning(
+                "No bronze data found for partition %s, skipping",
+                p,
+            )
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
-    logger.info("Total bronze row count for this run: %d", len(df))
+    logger.info(
+        "Total bronze row count for this run: %d", len(df)
+    )
     return df
 
 
-def write_silver(df: pd.DataFrame, path: str, database: str, table: str) -> None:
+def write_silver(
+    df: pd.DataFrame, path: str, database: str, table: str
+) -> None:
     """Write partitioned Parquet and register/update the Glue Catalog table."""
-    logger.info("Writing %d rows to %s (partitioned by ingested_date)", len(df), path)
+    logger.info(
+        "Writing %d rows to %s (partitioned by ingested_date)",
+        len(df),
+        path,
+    )
     wr.s3.to_parquet(
         df=df,
         path=path,
@@ -160,7 +211,9 @@ def write_silver(df: pd.DataFrame, path: str, database: str, table: str) -> None
 def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
     """Flatten nested instrument/walletImpact objects and cast types."""
     logger.info("Flattening nested JSON columns")
-    flat = pd.json_normalize(df.to_dict(orient="records"), sep=".")
+    flat = pd.json_normalize(
+        df.to_dict(orient="records"), sep="."
+    )
 
     # Columns that need numeric casting after flattening. Keys use dot
     # notation because pandas.json_normalize flattens nested dicts to
@@ -179,44 +232,82 @@ def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
 
     for c in DOUBLE_COLS:
         if c in flat.columns:
-            flat[c] = pd.to_numeric(flat[c], errors="coerce")
+            flat[c] = pd.to_numeric(
+                flat[c], errors="coerce"
+            )
         else:
-            logger.warning("Expected column missing from bronze data: %s", c)
+            logger.warning(
+                "Expected column missing from bronze data: %s",
+                c,
+            )
             flat[c] = pd.NA
 
     def col(name: str) -> pd.Series:
-        return flat[name] if name in flat.columns else pd.Series([None] * len(flat))
+        return (
+            flat[name]
+            if name in flat.columns
+            else pd.Series([None] * len(flat))
+        )
 
     result = pd.DataFrame(
         {
             "name": col("instrument.name"),
             "ticker": col("instrument.ticker"),
             "isin": col("instrument.isin"),
-            "created_at": pd.to_datetime(col("createdAt"), utc=True, errors="coerce"),
-            "asset_currency": col("instrument.currency"),
-            "avg_price_paid": col("averagePricePaid").astype("float64"),
-            "current_price": col("currentPrice").astype("float64"),
-            "quantity": col("quantity").astype("float64"),
-            "quantity_available_for_trading": col("quantityAvailableForTrading").astype("float64"),
-            "quantity_in_pies": col("quantityInPies").astype("float64"),
-            "account_currency": col("walletImpact.currency"),
-            "current_value": col("walletImpact.currentValue").astype("float64"),
-            "fx_impact": col("walletImpact.fxImpact").astype("float64"),
-            "total_cost": col("walletImpact.totalCost").astype("float64"),
-            "unrealized_profit_loss": col("walletImpact.unrealizedProfitLoss").astype("float64"),
-            "ingested_timestamp": pd.to_datetime(
-                col("ingested_timestamp"), utc=True, errors="coerce"
+            "created_at": pd.to_datetime(
+                col("createdAt"), utc=True, errors="coerce"
             ),
-            "ingested_date": pd.to_datetime(col("_bronze_partition_date"), errors="coerce").dt.date,
+            "asset_currency": col("instrument.currency"),
+            "avg_price_paid": col(
+                "averagePricePaid"
+            ).astype("float64"),
+            "current_price": col("currentPrice").astype(
+                "float64"
+            ),
+            "quantity": col("quantity").astype("float64"),
+            "quantity_available_for_trading": col(
+                "quantityAvailableForTrading"
+            ).astype("float64"),
+            "quantity_in_pies": col(
+                "quantityInPies"
+            ).astype("float64"),
+            "account_currency": col(
+                "walletImpact.currency"
+            ),
+            "current_value": col(
+                "walletImpact.currentValue"
+            ).astype("float64"),
+            "fx_impact": col(
+                "walletImpact.fxImpact"
+            ).astype("float64"),
+            "total_cost": col(
+                "walletImpact.totalCost"
+            ).astype("float64"),
+            "unrealized_profit_loss": col(
+                "walletImpact.unrealizedProfitLoss"
+            ).astype("float64"),
+            "ingested_timestamp": pd.to_datetime(
+                col("ingested_timestamp"),
+                utc=True,
+                errors="coerce",
+            ),
+            "ingested_date": pd.to_datetime(
+                col("_bronze_partition_date"),
+                errors="coerce",
+            ).dt.date,
         }
     )
     return result
 
 
-def transform_account_summary(df: pd.DataFrame) -> pd.DataFrame:
+def transform_account_summary(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
     """Flatten nested instrument/walletImpact objects and cast types."""
     logger.info("Flattening nested JSON columns")
-    flat = pd.json_normalize(df.to_dict(orient="records"), sep=".")
+    flat = pd.json_normalize(
+        df.to_dict(orient="records"), sep="."
+    )
 
     # Columns that need numeric casting after flattening. Keys use dot
     # notation because pandas.json_normalize flattens nested dicts to
@@ -234,30 +325,55 @@ def transform_account_summary(df: pd.DataFrame) -> pd.DataFrame:
 
     for c in DOUBLE_COLS:
         if c in flat.columns:
-            flat[c] = pd.to_numeric(flat[c], errors="coerce")
+            flat[c] = pd.to_numeric(
+                flat[c], errors="coerce"
+            )
         else:
-            logger.warning("Expected column missing from bronze data: %s", c)
+            logger.warning(
+                "Expected column missing from bronze data: %s",
+                c,
+            )
             flat[c] = pd.NA
 
     def col(name: str) -> pd.Series:
-        return flat[name] if name in flat.columns else pd.Series([None] * len(flat))
+        return (
+            flat[name]
+            if name in flat.columns
+            else pd.Series([None] * len(flat))
+        )
 
     result = pd.DataFrame(
         {
             "id": col("id"),
             "currency": col("currency"),
             "total_value": col("totalValue"),
-            "cash_available_to_trade": col("cash.availableToTrade"),
-            "cash_reserved_for_orders": col("cash.reservedForOrders"),
-            "cash_in_pies": col("cash.inPies"),
-            "total_value_investmented": col("investments.currentValue"),
-            "total_investment_cost": col("investments.totalCost"),
-            "realized_profit_loss": col("investments.realizedProfitLoss"),
-            "unrealized_profit_loss": col("investments.unrealizedProfitLoss"),
-            "ingested_timestamp": pd.to_datetime(
-                col("ingested_timestamp"), utc=True, errors="coerce"
+            "cash_available_to_trade": col(
+                "cash.availableToTrade"
             ),
-            "ingested_date": pd.to_datetime(col("ingested_date"), errors="coerce").dt.date,
+            "cash_reserved_for_orders": col(
+                "cash.reservedForOrders"
+            ),
+            "cash_in_pies": col("cash.inPies"),
+            "total_value_investmented": col(
+                "investments.currentValue"
+            ),
+            "total_investment_cost": col(
+                "investments.totalCost"
+            ),
+            "realized_profit_loss": col(
+                "investments.realizedProfitLoss"
+            ),
+            "unrealized_profit_loss": col(
+                "investments.unrealizedProfitLoss"
+            ),
+            "ingested_timestamp": pd.to_datetime(
+                col("ingested_timestamp"),
+                utc=True,
+                errors="coerce",
+            ),
+            "ingested_date": pd.to_datetime(
+                col("ingested_date"), errors="coerce"
+            ).dt.date,
         }
     )
     return result
@@ -293,7 +409,9 @@ def main() -> None:
     dates = dates_to_process()
     logger.info(f"Processing data for {len(dates)} days")
     if not dates:
-        logger.info("No new partitions to process. Exiting.")
+        logger.info(
+            "No new partitions to process. Exiting."
+        )
         return
 
     for key, mapping in CONFIG.items():
@@ -306,13 +424,20 @@ def main() -> None:
         df_bronze = read_bronze(input_path, dates)
 
         if df_bronze.empty:
-            logger.info(f"No {key} bronze data found for target dates. Exiting without writing.")
+            logger.info(
+                f"No {key} bronze data found for target dates. Exiting without writing."
+            )
             continue
 
         transform = mapping.get("transform")
         df_silver = transform(df_bronze)
 
-        write_silver(df_silver, output_path, glue_database, glue_table)
+        write_silver(
+            df_silver,
+            output_path,
+            glue_database,
+            glue_table,
+        )
 
     if not IS_BACKFILL:
         # Deliberately max(dates) - 1, not max(dates): today (always
@@ -321,7 +446,10 @@ def main() -> None:
         # only ever marks days that are fully in the past.
         set_watermark(max(dates) - timedelta(days=1))
 
-    logger.info("Job complete. Dates processed: %s", [d.isoformat() for d in dates])
+    logger.info(
+        "Job complete. Dates processed: %s",
+        [d.isoformat() for d in dates],
+    )
 
 
 if __name__ == "__main__":
