@@ -30,9 +30,12 @@ TRADE_LOG_TABLE_NAME = "trade_log"
 SECRET_NAME = "prod/financial/t212-dca-automation"
 DOMAIN = "https://live.trading212.com/api/v0/"
 ENDPOINT = "equity/orders/market"
+NOTIFICATION_EMAIL = "akinkunmimustapha1@gmail.com"
+SES_REGION = "eu-west-1"
+
 
 TICKER = "VWRPl_EQ"
-EQUITY = 10
+EQUITY = 5
 MAX_DRAWDOWN_THRESHOLD = -1.0
 MIN_DRAWDOWN_THRESHOLD = -2.5
 
@@ -145,15 +148,18 @@ def execute_market_order(
         return None
 
 
-def log_trade(table_name: str, ticker: str, value: float, quantity: float):
+def log_trade(
+    table_name: str, ticker: str, value: float, quantity: float, order_result
+):
     """Record executed trade entry with calculated quantity into DynamoDB."""
     trade = {
         "trade_id": str(uuid4()),
         "vendor": "trading-212",
+        "trader": "T212 DCA Automation",
         "asset": ticker,
         "value": value,
         "quantity": str(round(quantity, 6)) if quantity else "",
-        "trader": "T212 DCA Automation",
+        "additional_info": json.dumps(order_result),
         "created_datetime": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -164,6 +170,85 @@ def log_trade(table_name: str, ticker: str, value: float, quantity: float):
         return trade
     except Exception as e:
         logger.error("DynamoDB write failed: %s", e)
+        return None
+
+
+def send_notification(
+    recipient: str,
+    ticker: str,
+    equity: float,
+    quantity: float,
+    change_pct: float,
+    current_price: float,
+    order_result: dict,
+):
+    """Send an email notification after a successful market order."""
+
+    ses_client = boto3.client(
+        "ses",
+        region_name=SES_REGION,
+    )
+
+    order_id = order_result.get("id", "N/A")
+
+    subject = f"T212 DCA Order Executed: {ticker}"
+
+    body = f"""
+Trading 212 DCA order executed successfully.
+
+Asset: {ticker}
+Investment: €{equity:.2f}
+Quantity: {quantity:.6f}
+Price used for calculation: €{current_price:.4f}
+Daily change: {change_pct:.2f}%
+
+Trading 212 Order ID: {order_id}
+
+Order response:
+{json.dumps(order_result, indent=2)}
+"""
+
+    try:
+        logger.info(
+            "Sending trade notification to: %s",
+            recipient,
+        )
+
+        response = ses_client.send_email(
+            Source=NOTIFICATION_EMAIL,
+            Destination={
+                "ToAddresses": [recipient],
+            },
+            Message={
+                "Subject": {
+                    "Data": subject,
+                    "Charset": "UTF-8",
+                },
+                "Body": {
+                    "Text": {
+                        "Data": body,
+                        "Charset": "UTF-8",
+                    }
+                },
+            },
+        )
+
+        logger.info(
+            "Notification sent successfully. SES MessageId: %s",
+            response.get("MessageId"),
+        )
+
+        return response
+
+    except ClientError as e:
+        logger.error(
+            "SES notification failed: %s",
+            e,
+        )
+        return None
+
+    except Exception:
+        logger.exception("Unexpected error sending notification")
         return None
 
 
@@ -223,17 +308,45 @@ def main(event=None, context=None):
     order_result = execute_market_order(
         DOMAIN, ENDPOINT, api_token, secret_token, payload
     )
+
     if not order_result:
         return {"statusCode": 500, "body": "Market order execution failed"}
 
     # 5. Log Trade
-    trade = log_trade(TRADE_LOG_TABLE_NAME, TICKER, EQUITY, calculated_quantity)
+    trade = log_trade(
+        TRADE_LOG_TABLE_NAME,
+        TICKER,
+        EQUITY,
+        calculated_quantity,
+        order_result,
+    )
+
     if not trade:
         logger.warning("Order was placed, but failed to log trade to DynamoDB.")
 
+    # 6. Send notification
+    notification = send_notification(
+        recipient=NOTIFICATION_EMAIL,
+        ticker=TICKER,
+        equity=EQUITY,
+        quantity=calculated_quantity,
+        change_pct=change_pct,
+        current_price=current_price,
+        order_result=order_result,
+    )
+
+    if not notification:
+        logger.warning("Trade was executed, but notification failed.")
+
     return {
         "statusCode": 200,
-        "body": json.dumps({"status": "order_executed", "trade": trade}),
+        "body": json.dumps(
+            {
+                "status": "order_executed",
+                "trade": trade,
+                "notification_sent": notification is not None,
+            }
+        ),
     }
 
 

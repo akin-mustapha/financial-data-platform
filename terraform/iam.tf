@@ -186,6 +186,15 @@ resource "aws_iam_role_policy" "lambda_pipeline" {
         Resource = [
           aws_dynamodb_table.trade_log.arn  # Or "arn:aws:dynamodb:${var.aws_region}:${var.aws_account_id}:table/trade_log"
         ]
+      },
+      {
+        Sid    = "SESAccess"
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail"
+        ]
+        Resource = "*"
       }
     ]
   })
