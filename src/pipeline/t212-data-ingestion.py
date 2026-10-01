@@ -10,7 +10,6 @@ from urllib.request import Request, urlopen
 import boto3
 from botocore.exceptions import ClientError
 
-
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -51,25 +50,15 @@ def get_secret():
             region_name=region_name,
         )
 
-        get_secret_value_response = client.get_secret_value(
-            SecretId=secret_name
-        )
+        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
 
     except ClientError as e:
-        logger.error(
-            "[SECRETS] Failed to retrieve credentials: %s",
-            e
-        )
+        logger.error("[SECRETS] Failed to retrieve credentials: %s", e)
         raise
 
-    secret = json.loads(
-        get_secret_value_response["SecretString"]
-    )
+    secret = json.loads(get_secret_value_response["SecretString"])
 
-    return (
-        secret.get("T212_API_TOKEN"),
-        secret.get("T212_SECRET_TOKEN")
-    )
+    return (secret.get("T212_API_TOKEN"), secret.get("T212_SECRET_TOKEN"))
 
 
 def fetch_endpoint(
@@ -90,11 +79,7 @@ def fetch_endpoint(
     """
     start = time.perf_counter()
     try:
-        request = Request(
-            url,
-            headers=header,
-            method="GET"
-        )
+        request = Request(url, headers=header, method="GET")
 
         with urlopen(request, timeout=10) as response:
             payload = response.read().decode("utf-8")
@@ -117,10 +102,9 @@ def fetch_endpoint(
         duration = time.perf_counter() - start
 
         logger.info(
-            "[API] Data retrieved successfully | "
-            "records=%d | duration=%.2fs",
+            "[API] Data retrieved successfully | " "records=%d | duration=%.2fs",
             len(records),
-            duration
+            duration,
         )
 
         return records, duration
@@ -128,21 +112,16 @@ def fetch_endpoint(
     except Exception as e:
         duration = time.perf_counter() - start
         logger.error(
-            "[API] Failed to retrieve data from %s | "
-            "duration=%.2fs | error=%s",
+            "[API] Failed to retrieve data from %s | " "duration=%.2fs | error=%s",
             url,
             duration,
-            e
+            e,
         )
 
         raise
 
 
-def save_to_s3(
-    data: list[dict],
-    bucket_name: str,
-    key: str
-) -> float:
+def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
     """Save data to S3."""
 
     start = time.perf_counter()
@@ -166,33 +145,25 @@ def save_to_s3(
             for pos in data
         ]
 
-        body = "\n".join(
-            json.dumps(record)
-            for record in data
-        )
+        body = "\n".join(json.dumps(record) for record in data)
 
         logger.info(
-            "[S3] Uploading data | "
-            "records=%d | destination=s3://%s/%s",
+            "[S3] Uploading data | " "records=%d | destination=s3://%s/%s",
             count_records,
             bucket_name,
-            key
+            key,
         )
 
         client.put_object(
-            Bucket=bucket_name,
-            Key=key,
-            Body=body,
-            ContentType="application/json"
+            Bucket=bucket_name, Key=key, Body=body, ContentType="application/json"
         )
 
         duration = time.perf_counter() - start
 
         logger.info(
-            "[S3] Data written successfully | "
-            "records=%d | duration=%.2fs",
+            "[S3] Data written successfully | " "records=%d | duration=%.2fs",
             count_records,
-            duration
+            duration,
         )
         return duration
 
@@ -200,11 +171,10 @@ def save_to_s3(
         duration = time.perf_counter() - start
 
         logger.error(
-            "[S3] Upload failed | "
-            "records=%d | duration=%.2fs | error=%s",
+            "[S3] Upload failed | " "records=%d | duration=%.2fs | error=%s",
             count_records,
             duration,
-            e
+            e,
         )
 
         # Dead Letter
@@ -212,14 +182,14 @@ def save_to_s3(
             Bucket=bucket_name,
             Key=f"dead-letters/{key}",
             Body=body,
-            ContentType="application/json"
+            ContentType="application/json",
         )
 
         logger.error(
             "[S3] Data written to dead-letter location | "
             "destination=s3://%s/dead-letters/%s",
             bucket_name,
-            key
+            key,
         )
         raise
 
@@ -285,11 +255,7 @@ def lambda_handler(event, context):
             f"{now.strftime('%Y%m%dT%H%M%S')}.json"
         )
 
-        s3_duration = save_to_s3(
-            res,
-            bucket_name,
-            key
-        )
+        s3_duration = save_to_s3(res, bucket_name, key)
 
         endpoint_metrics[k] = {
             "records": record_count,
@@ -323,7 +289,7 @@ def lambda_handler(event, context):
     logger.info(
         "Total                        %4d records    %.2fs",
         total_records,
-        total_duration
+        total_duration,
     )
 
     logger.info("=" * 60)
@@ -334,5 +300,5 @@ def lambda_handler(event, context):
         "statusCode": 200,
         "records": total_records,
         "endpoints": endpoint_metrics,
-        "duration_seconds": round(total_duration, 2)
+        "duration_seconds": round(total_duration, 2),
     }

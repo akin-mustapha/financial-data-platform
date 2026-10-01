@@ -37,6 +37,7 @@ Job setup (Python Shell, not Spark):
    no need to build/upload a wheel for common packages like these.)
 - Max capacity: 0.0625 or 1 DPU is plenty at this data volume.
 """
+
 import sys
 import argparse
 import logging
@@ -53,8 +54,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # Optional backfill window, parsed separately from getResolvedOptions
 # since getResolvedOptions treats every listed arg as required.
 _parser = argparse.ArgumentParser(add_help=False)
-_parser.add_argument("--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)")
-_parser.add_argument("--END_DATE", default=None, help="YYYY-MM-DD, backfill end (inclusive). Defaults to today if omitted.")
+_parser.add_argument(
+    "--START_DATE", default=None, help="YYYY-MM-DD, backfill start (inclusive)"
+)
+_parser.add_argument(
+    "--END_DATE",
+    default=None,
+    help="YYYY-MM-DD, backfill end (inclusive). Defaults to today if omitted.",
+)
 
 BACKFILL_ARGS, _ = _parser.parse_known_args(sys.argv[1:])
 IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
@@ -68,22 +75,27 @@ def get_watermark() -> Optional[date]:
         state = wr.s3.read_json(STATE_PATH, lines=False)
         return pd.to_datetime(state["last_processed_partition_date"].iloc[0]).date()
     except Exception:
-        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
+        logger.info(
+            "No watermark found at %s — treating this as the first run", STATE_PATH
+        )
         return None
 
+
 def set_watermark(new_date: date) -> None:
-    wr.s3.to_json(df=pd.DataFrame([{"last_processed_partition_date": new_date.isoformat()}]), path=STATE_PATH)
+    wr.s3.to_json(
+        df=pd.DataFrame([{"last_processed_partition_date": new_date.isoformat()}]),
+        path=STATE_PATH,
+    )
     logger.info("Watermark advanced to %s", new_date)
+
 
 def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
     if is_backfill:
         start = pd.to_datetime(from_date).date()
-        end = (
-            pd.to_datetime(to_date).date()
-            if to_date
-            else date.today()
+        end = pd.to_datetime(to_date).date() if to_date else date.today()
+        logger.info(
+            "Backfill mode: %s to %s (watermark will NOT be updated)", start, end
         )
-        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
         return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # today is always included and reprocessed, even if the watermark
@@ -125,16 +137,17 @@ def read_bronze(path, dates: List[date]) -> pd.DataFrame:
             part_df["_bronze_partition_date"] = d.isoformat()
             frames.append(part_df)
             logger.info("Read partition %s (%d rows)", p, len(part_df))
-        except NoFilesFound as e:
+        except NoFilesFound:
             logger.warning("No bronze data found for partition %s, skipping", p)
-        except Exception:
+        except Exception as e:
             raise e
-        
+
     if not frames:
         return pd.DataFrame()
     df = pd.concat(frames, ignore_index=True)
     logger.info("Total bronze row count for this run: %d", len(df))
     return df
+
 
 def write_silver(df: pd.DataFrame, path: str, database: str, table: str) -> None:
     """Write partitioned Parquet and register/update the Glue Catalog table."""
@@ -143,17 +156,18 @@ def write_silver(df: pd.DataFrame, path: str, database: str, table: str) -> None
         df=df,
         path=path,
         dataset=True,
-        mode="overwrite_partitions",   # safe to rerun/backfill any date without duplicating
+        mode="overwrite_partitions",  # safe to rerun/backfill any date without duplicating
         partition_cols=["ingested_date"],
-        database=database,             # writing database+table registers/updates the
-        table=table,                   # Glue Data Catalog entry — no crawler needed
+        database=database,  # writing database+table registers/updates the
+        table=table,  # Glue Data Catalog entry — no crawler needed
     )
+
 
 def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
     """Flatten nested instrument/walletImpact objects and cast types."""
     logger.info("Flattening nested JSON columns")
     flat = pd.json_normalize(df.to_dict(orient="records"), sep=".")
-    
+
     # Columns that need numeric casting after flattening. Keys use dot
     # notation because pandas.json_normalize flattens nested dicts to
     # "parent.child" column names.
@@ -179,26 +193,37 @@ def transform_positions(df: pd.DataFrame) -> pd.DataFrame:
     def col(name: str) -> pd.Series:
         return flat[name] if name in flat.columns else pd.Series([None] * len(flat))
 
-    result = pd.DataFrame({
-        "name": col("instrument.name"),
-        "ticker": col("instrument.ticker"),
-        "isin": col("instrument.isin"),
-        "created_at": pd.to_datetime(col("createdAt"), utc=True, errors="coerce"),
-        "asset_currency": col("instrument.currency"),
-        "avg_price_paid": col("averagePricePaid").astype("float64"),
-        "current_price": col("currentPrice").astype("float64"),
-        "quantity": col("quantity").astype("float64"),
-        "quantity_available_for_trading": col("quantityAvailableForTrading").astype("float64"),
-        "quantity_in_pies": col("quantityInPies").astype("float64"),
-        "account_currency": col("walletImpact.currency"),
-        "current_value": col("walletImpact.currentValue").astype("float64"),
-        "fx_impact": col("walletImpact.fxImpact").astype("float64"),
-        "total_cost": col("walletImpact.totalCost").astype("float64"),
-        "unrealized_profit_loss": col("walletImpact.unrealizedProfitLoss").astype("float64"),
-        "ingested_timestamp": pd.to_datetime(col("ingested_timestamp"), utc=True, errors="coerce"),
-        "ingested_date": pd.to_datetime(col("_bronze_partition_date"), errors="coerce").dt.date,
-    })
+    result = pd.DataFrame(
+        {
+            "name": col("instrument.name"),
+            "ticker": col("instrument.ticker"),
+            "isin": col("instrument.isin"),
+            "created_at": pd.to_datetime(col("createdAt"), utc=True, errors="coerce"),
+            "asset_currency": col("instrument.currency"),
+            "avg_price_paid": col("averagePricePaid").astype("float64"),
+            "current_price": col("currentPrice").astype("float64"),
+            "quantity": col("quantity").astype("float64"),
+            "quantity_available_for_trading": col("quantityAvailableForTrading").astype(
+                "float64"
+            ),
+            "quantity_in_pies": col("quantityInPies").astype("float64"),
+            "account_currency": col("walletImpact.currency"),
+            "current_value": col("walletImpact.currentValue").astype("float64"),
+            "fx_impact": col("walletImpact.fxImpact").astype("float64"),
+            "total_cost": col("walletImpact.totalCost").astype("float64"),
+            "unrealized_profit_loss": col("walletImpact.unrealizedProfitLoss").astype(
+                "float64"
+            ),
+            "ingested_timestamp": pd.to_datetime(
+                col("ingested_timestamp"), utc=True, errors="coerce"
+            ),
+            "ingested_date": pd.to_datetime(
+                col("_bronze_partition_date"), errors="coerce"
+            ).dt.date,
+        }
+    )
     return result
+
 
 def transform_account_summary(df: pd.DataFrame) -> pd.DataFrame:
     """Flatten nested instrument/walletImpact objects and cast types."""
@@ -218,7 +243,7 @@ def transform_account_summary(df: pd.DataFrame) -> pd.DataFrame:
         "investments.realizedProfitLoss",
         "investments.unrealizedProfitLoss",
     ]
-    
+
     for c in DOUBLE_COLS:
         if c in flat.columns:
             flat[c] = pd.to_numeric(flat[c], errors="coerce")
@@ -229,77 +254,85 @@ def transform_account_summary(df: pd.DataFrame) -> pd.DataFrame:
     def col(name: str) -> pd.Series:
         return flat[name] if name in flat.columns else pd.Series([None] * len(flat))
 
-    result = pd.DataFrame({
-        "id": col("id"),
-        "currency": col("currency"),
-        "total_value": col("totalValue"),
-        "cash_available_to_trade": col("cash.availableToTrade"),
-        "cash_reserved_for_orders": col("cash.reservedForOrders"),
-        "cash_in_pies": col("cash.inPies"),
-        "total_value_investmented": col("investments.currentValue"),
-        "total_investment_cost": col("investments.totalCost"),
-        "realized_profit_loss": col("investments.realizedProfitLoss"),
-        "unrealized_profit_loss": col("investments.unrealizedProfitLoss"),
-        "ingested_timestamp": pd.to_datetime(col("ingested_timestamp"), utc=True, errors="coerce"),
-        "ingested_date": pd.to_datetime(col("ingested_date"), errors="coerce").dt.date,
-    })
+    result = pd.DataFrame(
+        {
+            "id": col("id"),
+            "currency": col("currency"),
+            "total_value": col("totalValue"),
+            "cash_available_to_trade": col("cash.availableToTrade"),
+            "cash_reserved_for_orders": col("cash.reservedForOrders"),
+            "cash_in_pies": col("cash.inPies"),
+            "total_value_investmented": col("investments.currentValue"),
+            "total_investment_cost": col("investments.totalCost"),
+            "realized_profit_loss": col("investments.realizedProfitLoss"),
+            "unrealized_profit_loss": col("investments.unrealizedProfitLoss"),
+            "ingested_timestamp": pd.to_datetime(
+                col("ingested_timestamp"), utc=True, errors="coerce"
+            ),
+            "ingested_date": pd.to_datetime(
+                col("ingested_date"), errors="coerce"
+            ).dt.date,
+        }
+    )
     return result
+
 
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
 CONFIG = {
-        "positions": {
-            "input_path": "s3://financial-dataflow/data/bronze/trading212/positions/",  # ingested_date=YYYY-MM-DD/ partitions
-            "output_path": "s3://financial-dataflow/data/silver/trading212/positions/",
-            "glue_database": "financials",
-            "glue_table": "silver_t212_positions",
-            "transform": transform_positions
-        },
-        "account_summary": {
-            "input_path": "s3://financial-dataflow/data/bronze/trading212/account/",
-            "output_path": "s3://financial-dataflow/data/silver/trading212/account_summary/",
-            "glue_database": "financials",
-            "glue_table": "silver_t212_account_summary",
-            "transform": transform_account_summary
-        }
-    
-    }
+    "positions": {
+        "input_path": "s3://financial-dataflow/data/bronze/trading212/positions/",  # ingested_date=YYYY-MM-DD/ partitions
+        "output_path": "s3://financial-dataflow/data/silver/trading212/positions/",
+        "glue_database": "financials",
+        "glue_table": "silver_t212_positions",
+        "transform": transform_positions,
+    },
+    "account_summary": {
+        "input_path": "s3://financial-dataflow/data/bronze/trading212/account/",
+        "output_path": "s3://financial-dataflow/data/silver/trading212/account_summary/",
+        "glue_database": "financials",
+        "glue_table": "silver_t212_account_summary",
+        "transform": transform_account_summary,
+    },
+}
 
 STATE_PATH = "s3://financial-dataflow/data/silver/trading212/_state/watermark.json"
+
 
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
 def main(event) -> None:
-    
+
     from_date = event.get("from_date")
     to_date = event.get("to_date")
     is_backfill = bool(from_date)
-    
+
     dates = dates_to_process(from_date, to_date, is_backfill)
     logger.info(f"Processing data for {len(dates)} days")
     if not dates:
         logger.info("No new partitions to process. Exiting.")
         return
-    
+
     for key, mapping in CONFIG.items():
         input_path = mapping.get("input_path")
         output_path = mapping.get("output_path")
         glue_database = mapping.get("glue_database")
         glue_table = mapping.get("glue_table")
-        
+
         logger.info(f"Reading {key} bronze data")
         df_bronze = read_bronze(input_path, dates)
-        
-        
+
         if df_bronze.empty:
-            logger.info(f"No {key} bronze data found for target dates. Exiting without writing.")
+            logger.info(
+                f"No {key} bronze data found for target dates. Exiting without writing."
+            )
             continue
-        
+
         transform = mapping.get("transform")
         df_silver = transform(df_bronze)
-        
+
         write_silver(df_silver, output_path, glue_database, glue_table)
 
     if not is_backfill:
@@ -314,19 +347,15 @@ def main(event) -> None:
 
 def lambda_handler(event, context):
     main(event)
-    
+
     return {
         "statusCode": 200,
         # "records": total_records,
         # "endpoints": endpoint_metrics,
         # "duration_seconds": round(total_duration, 2)
     }
-    
+
 
 if __name__ == "__main__":
-    event = {
-    "from_date": "2026-08-15",
-    "to_date": "2026-08-25"
-    }
+    event = {"from_date": "2026-08-15", "to_date": "2026-08-25"}
     main(event)
-    

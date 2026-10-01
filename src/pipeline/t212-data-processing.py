@@ -30,11 +30,10 @@ Job setup (Python Shell, not Spark):
     --additional-python-modules  awswrangler==3.*,pandas,pyarrow
 - Max capacity: 0.0625 or 1 DPU is plenty at this data volume.
 """
-import sys
+
 import json
-import argparse
 import logging
-from datetime import date, timedelta, datetime,timezone
+from datetime import date, timedelta, datetime, timezone
 from typing import List, Optional
 
 import boto3
@@ -44,7 +43,7 @@ import awswrangler as wr
 # ---------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------
-INPUT_PATH = "s3://financial-dataflow/data/silver/trading212/positions/"   # ingested_date=YYYY-MM-DD/ partitions
+INPUT_PATH = "s3://financial-dataflow/data/silver/trading212/positions/"  # ingested_date=YYYY-MM-DD/ partitions
 STATE_PATH = "s3://financial-dataflow/data/gold/_state/watermark.json"
 MAPPING_BUCKET = "financial-dataflow"
 MAPPING_KEY = "resources/asset_mapping.json"
@@ -62,6 +61,7 @@ DIM_DATE_PATH = "s3://financial-dataflow/data/gold/dim_date/"
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+
 # ---------------------------------------------------------------------
 # Watermark helpers (same pattern as bronze -> silver, separate state file)
 # ---------------------------------------------------------------------
@@ -70,24 +70,27 @@ def get_watermark() -> Optional[date]:
         state = wr.s3.read_json(STATE_PATH, lines=False)
         return pd.to_datetime(state["last_processed_date"].iloc[0]).date()
     except Exception:
-        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
+        logger.info(
+            "No watermark found at %s — treating this as the first run", STATE_PATH
+        )
         return None
 
 
 def set_watermark(new_date: date) -> None:
-    wr.s3.to_json(df=pd.DataFrame([{"last_processed_date": new_date.isoformat()}]), path=STATE_PATH)
+    wr.s3.to_json(
+        df=pd.DataFrame([{"last_processed_date": new_date.isoformat()}]),
+        path=STATE_PATH,
+    )
     logger.info("Watermark advanced to %s", new_date)
 
 
 def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
     if is_backfill:
         start = pd.to_datetime(from_date).date()
-        end = (
-            pd.to_datetime(to_date).date()
-            if to_date
-            else date.today()
+        end = pd.to_datetime(to_date).date() if to_date else date.today()
+        logger.info(
+            "Backfill mode: %s to %s (watermark will NOT be updated)", start, end
         )
-        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
         return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # today is always included and reprocessed, even if the watermark
@@ -172,7 +175,9 @@ DEFAULT_ASSET = {
 }
 
 
-def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame) -> pd.DataFrame:
+def reconcile_unmapped_tickers(
+    fact_tickers: pd.Series, dim_asset: pd.DataFrame
+) -> pd.DataFrame:
     """Append placeholder dim_asset rows for tickers seen in silver but
     absent from asset_mapping.json, so fact_positions never references
     a ticker that doesn't exist in dim_asset."""
@@ -181,7 +186,11 @@ def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame)
     if not unmapped:
         return dim_asset
 
-    logger.warning("%d ticker(s) in silver have no asset mapping entry: %s", len(unmapped), unmapped)
+    logger.warning(
+        "%d ticker(s) in silver have no asset mapping entry: %s",
+        len(unmapped),
+        unmapped,
+    )
     placeholders = pd.DataFrame([{"ticker": t, **DEFAULT_ASSET} for t in unmapped])
     return pd.concat([dim_asset, placeholders], ignore_index=True)
 
@@ -206,18 +215,20 @@ def to_date_id(dates) -> pd.Series:
 def build_dim_date(start: date, end: date) -> pd.DataFrame:
     """Standard calendar dimension, one row per day in [start, end]."""
     days = pd.date_range(start, end, freq="D")
-    return pd.DataFrame({
-        "date_id": to_date_id(days),
-        "full_date": days.date,
-        "year": days.year,
-        "month": days.month,
-        "month_name": days.strftime("%B"),
-        "day": days.day,
-        "day_of_week": days.dayofweek,  # Monday=0
-        "day_name": days.strftime("%A"),
-        "quarter": days.quarter,
-        "is_weekend": days.dayofweek >= 5,
-    })
+    return pd.DataFrame(
+        {
+            "date_id": to_date_id(days),
+            "full_date": days.date,
+            "year": days.year,
+            "month": days.month,
+            "month_name": days.strftime("%B"),
+            "day": days.day,
+            "day_of_week": days.dayofweek,  # Monday=0
+            "day_name": days.strftime("%A"),
+            "quarter": days.quarter,
+            "is_weekend": days.dayofweek >= 5,
+        }
+    )
 
 
 def merge_dim_date(new_rows: pd.DataFrame) -> pd.DataFrame:
@@ -237,6 +248,7 @@ def merge_dim_date(new_rows: pd.DataFrame) -> pd.DataFrame:
 # fact_positions
 # ---------------------------------------------------------------------
 
+
 def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
     """Narrow silver down to the fact grain: FKs + measures only.
     Asset attributes (name, sector, industry, ...) live in dim_asset
@@ -247,7 +259,7 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
     daily_return_pct have a previous close to diff against on
     incremental runs; its rows are dropped again before returning."""
 
-    sql =F"""
+    sql = f"""
 
     WITH account_summary AS (
         SELECT
@@ -376,7 +388,7 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
         fact = wr.athena.read_sql_query(
             sql=sql,
             database=GLUE_DATABASE,
-            s3_output="s3://financial-dataflow/query-results/"
+            s3_output="s3://financial-dataflow/query-results/",
         )
 
         return fact
@@ -386,7 +398,9 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
 
 
 def write_fact_positions(df: pd.DataFrame) -> None:
-    logger.info("Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH)
+    logger.info(
+        "Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH
+    )
     wr.s3.to_parquet(
         df=df,
         path=FACT_PATH,
@@ -399,7 +413,9 @@ def write_fact_positions(df: pd.DataFrame) -> None:
 
 
 def write_dim_asset(df: pd.DataFrame) -> None:
-    logger.info("Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH)
+    logger.info(
+        "Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH
+    )
     wr.s3.to_parquet(
         df=df,
         path=DIM_ASSET_PATH,
@@ -423,12 +439,11 @@ def write_dim_date(df: pd.DataFrame) -> None:
 
 
 def main(event) -> None:
-    
+
     from_date = event.get("from_date")
     to_date = event.get("to_date")
     is_backfill = bool(from_date)
-    
-    
+
     dates = dates_to_process(from_date, to_date, is_backfill)
     if not dates:
         logger.info("No new partitions to process. Exiting.")
@@ -445,9 +460,9 @@ def main(event) -> None:
     dim_asset = build_dim_asset()
     dim_asset = reconcile_unmapped_tickers(df_silver["ticker"], dim_asset)
     write_dim_asset(dim_asset)
-    
+
     current_date = datetime.now(timezone.utc).date()
-    
+
     new_dim_date_rows = build_dim_date(from_date, current_date)
     dim_date = merge_dim_date(new_dim_date_rows)
     write_dim_date(dim_date)
@@ -464,9 +479,10 @@ def main(event) -> None:
 
     logger.info("Job complete. Dates processed: %s", [d.isoformat() for d in dates])
 
+
 def lambda_handler(event, context):
     main(event)
-    
+
     return {
         "statusCode": 200,
         # "records": total_records,
@@ -474,10 +490,7 @@ def lambda_handler(event, context):
         # "duration_seconds": round(total_duration, 2)
     }
 
-if __name__ == "__main__":
-    event = {
-    "from_date": "2026-06-15",
-    "to_date": "2026-10-25"
-    }
-    main(event)
 
+if __name__ == "__main__":
+    event = {"from_date": "2026-06-15", "to_date": "2026-10-25"}
+    main(event)
