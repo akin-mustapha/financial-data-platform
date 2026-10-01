@@ -33,7 +33,12 @@ Job setup (Python Shell, not Spark):
 
 import json
 import logging
-from datetime import date, timedelta, datetime, timezone
+from datetime import (
+    date,
+    timedelta,
+    datetime,
+    timezone,
+)
 from typing import List, Optional
 
 import boto3
@@ -56,10 +61,15 @@ DIM_ASSET_TABLE = "dim_t212_asset"
 DIM_ASSET_PATH = "s3://financial-dataflow/data/gold/dim_t212_asset/"
 
 DIM_DATE_TABLE = "dim_date"
-DIM_DATE_PATH = "s3://financial-dataflow/data/gold/dim_date/"
+DIM_DATE_PATH = (
+    "s3://financial-dataflow/data/gold/dim_date/"
+)
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 
 # ---------------------------------------------------------------------
@@ -67,27 +77,55 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # ---------------------------------------------------------------------
 def get_watermark() -> Optional[date]:
     try:
-        state = wr.s3.read_json(STATE_PATH, lines=False)
-        return pd.to_datetime(state["last_processed_date"].iloc[0]).date()
+        state = wr.s3.read_json(
+            STATE_PATH, lines=False
+        )
+        return pd.to_datetime(
+            state["last_processed_date"].iloc[0]
+        ).date()
     except Exception:
-        logger.info("No watermark found at %s — treating this as the first run", STATE_PATH)
+        logger.info(
+            "No watermark found at %s — treating this as the first run",
+            STATE_PATH,
+        )
         return None
 
 
 def set_watermark(new_date: date) -> None:
     wr.s3.to_json(
-        df=pd.DataFrame([{"last_processed_date": new_date.isoformat()}]),
+        df=pd.DataFrame(
+            [
+                {
+                    "last_processed_date": new_date.isoformat()
+                }
+            ]
+        ),
         path=STATE_PATH,
     )
-    logger.info("Watermark advanced to %s", new_date)
+    logger.info(
+        "Watermark advanced to %s", new_date
+    )
 
 
-def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
+def dates_to_process(
+    from_date, to_date, is_backfill
+) -> List[date]:
     if is_backfill:
         start = pd.to_datetime(from_date).date()
-        end = pd.to_datetime(to_date).date() if to_date else date.today()
-        logger.info("Backfill mode: %s to %s (watermark will NOT be updated)", start, end)
-        return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        end = (
+            pd.to_datetime(to_date).date()
+            if to_date
+            else date.today()
+        )
+        logger.info(
+            "Backfill mode: %s to %s (watermark will NOT be updated)",
+            start,
+            end,
+        )
+        return [
+            start + timedelta(days=i)
+            for i in range((end - start).days + 1)
+        ]
 
     # today is always included and reprocessed, even if the watermark
     # already covers it -- the Lambda ingests up to three times a day
@@ -97,31 +135,55 @@ def dates_to_process(from_date, to_date, is_backfill) -> List[date]:
     # and overwrite_partitions replaces the partition each time.
     watermark = get_watermark()
     today = date.today()
-    start = today if watermark is None else min(watermark + timedelta(days=1), today)
-    return [start + timedelta(days=i) for i in range((today - start).days + 1)]
+    start = (
+        today
+        if watermark is None
+        else min(
+            watermark + timedelta(days=1), today
+        )
+    )
+    return [
+        start + timedelta(days=i)
+        for i in range((today - start).days + 1)
+    ]
 
 
 # ---------------------------------------------------------------------
 # Read silver
 # ---------------------------------------------------------------------
-def read_silver(dates: List[date]) -> pd.DataFrame:
+def read_silver(
+    dates: List[date],
+) -> pd.DataFrame:
     """Read silver Parquet for the given ingested_date partitions."""
     target_dates = {d.isoformat() for d in dates}
-    logger.info("Reading silver partitions for dates: %s", sorted(target_dates))
+    logger.info(
+        "Reading silver partitions for dates: %s",
+        sorted(target_dates),
+    )
     try:
         df = wr.s3.read_parquet(
             path=INPUT_PATH,
             dataset=True,
-            partition_filter=lambda part: part.get("ingested_date") in target_dates,
+            partition_filter=lambda part: part.get(
+                "ingested_date"
+            )
+            in target_dates,
         )
     except wr.exceptions.NoFilesFound:
-        logger.warning("No silver data found for target dates")
+        logger.warning(
+            "No silver data found for target dates"
+        )
         return pd.DataFrame()
-    logger.info("Silver row count for this run: %d", len(df))
+    logger.info(
+        "Silver row count for this run: %d",
+        len(df),
+    )
     return df
 
 
-def read_silver_lookback_day(before: date) -> pd.DataFrame:
+def read_silver_lookback_day(
+    before: date,
+) -> pd.DataFrame:
     """Read the single silver partition immediately preceding the run's
     target dates, so per-ticker day-over-day deltas (build_fact_positions)
     have a prior close to compare against even on incremental runs that
@@ -141,10 +203,18 @@ def build_dim_asset() -> pd.DataFrame:
     applies retroactively when joined against historical fact rows.
     No version history is kept.
     """
-    logger.info("Loading asset mapping from s3://%s/%s", MAPPING_BUCKET, MAPPING_KEY)
+    logger.info(
+        "Loading asset mapping from s3://%s/%s",
+        MAPPING_BUCKET,
+        MAPPING_KEY,
+    )
     s3 = boto3.client("s3")
-    response = s3.get_object(Bucket=MAPPING_BUCKET, Key=MAPPING_KEY)
-    asset_mapping = json.loads(response["Body"].read())
+    response = s3.get_object(
+        Bucket=MAPPING_BUCKET, Key=MAPPING_KEY
+    )
+    asset_mapping = json.loads(
+        response["Body"].read()
+    )
 
     rows = [
         {
@@ -156,7 +226,9 @@ def build_dim_asset() -> pd.DataFrame:
             "asset_type": v["asset_type"],
             "is_etf": v["asset_type"] == "etf",
         }
-        for k, v in asset_mapping["assets"].items()
+        for k, v in asset_mapping[
+            "assets"
+        ].items()
     ]
     return pd.DataFrame(rows)
 
@@ -171,12 +243,17 @@ DEFAULT_ASSET = {
 }
 
 
-def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame) -> pd.DataFrame:
+def reconcile_unmapped_tickers(
+    fact_tickers: pd.Series,
+    dim_asset: pd.DataFrame,
+) -> pd.DataFrame:
     """Append placeholder dim_asset rows for tickers seen in silver but
     absent from asset_mapping.json, so fact_positions never references
     a ticker that doesn't exist in dim_asset."""
     known = set(dim_asset["ticker"])
-    unmapped = sorted(set(fact_tickers.dropna()) - known)
+    unmapped = sorted(
+        set(fact_tickers.dropna()) - known
+    )
     if not unmapped:
         return dim_asset
 
@@ -185,8 +262,16 @@ def reconcile_unmapped_tickers(fact_tickers: pd.Series, dim_asset: pd.DataFrame)
         len(unmapped),
         unmapped,
     )
-    placeholders = pd.DataFrame([{"ticker": t, **DEFAULT_ASSET} for t in unmapped])
-    return pd.concat([dim_asset, placeholders], ignore_index=True)
+    placeholders = pd.DataFrame(
+        [
+            {"ticker": t, **DEFAULT_ASSET}
+            for t in unmapped
+        ]
+    )
+    return pd.concat(
+        [dim_asset, placeholders],
+        ignore_index=True,
+    )
 
 
 # ---------------------------------------------------------------------
@@ -200,13 +285,19 @@ def to_date_id(dates) -> pd.Series:
     # (e.g. from pd.date_range) to a Series first, since .dt is a
     # Series-only accessor -- DatetimeIndex exposes the same
     # .strftime() directly on itself, not via .dt.
-    return pd.to_datetime(pd.Series(dates)).dt.strftime("%Y%m%d").astype("int64")
+    return (
+        pd.to_datetime(pd.Series(dates))
+        .dt.strftime("%Y%m%d")
+        .astype("int64")
+    )
 
 
 # ---------------------------------------------------------------------
 # dim_date
 # ---------------------------------------------------------------------
-def build_dim_date(start: date, end: date) -> pd.DataFrame:
+def build_dim_date(
+    start: date, end: date
+) -> pd.DataFrame:
     """Standard calendar dimension, one row per day in [start, end]."""
     days = pd.date_range(start, end, freq="D")
     return pd.DataFrame(
@@ -225,16 +316,27 @@ def build_dim_date(start: date, end: date) -> pd.DataFrame:
     )
 
 
-def merge_dim_date(new_rows: pd.DataFrame) -> pd.DataFrame:
+def merge_dim_date(
+    new_rows: pd.DataFrame,
+) -> pd.DataFrame:
     """Merge newly-needed date rows into the existing dim_date table,
-    de-duplicated by date_id. dim_date only ever grows."""
+    de-duplicated by date_id. dim_date only ever grows.
+    """
     try:
-        existing = wr.s3.read_parquet(path=DIM_DATE_PATH, dataset=True)
+        existing = wr.s3.read_parquet(
+            path=DIM_DATE_PATH, dataset=True
+        )
     except wr.exceptions.NoFilesFound:
-        existing = pd.DataFrame(columns=new_rows.columns)
+        existing = pd.DataFrame(
+            columns=new_rows.columns
+        )
 
-    combined = pd.concat([existing, new_rows], ignore_index=True)
-    combined = combined.drop_duplicates(subset="date_id").sort_values("date_id")
+    combined = pd.concat(
+        [existing, new_rows], ignore_index=True
+    )
+    combined = combined.drop_duplicates(
+        subset="date_id"
+    ).sort_values("date_id")
     return combined.reset_index(drop=True)
 
 
@@ -243,7 +345,9 @@ def merge_dim_date(new_rows: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------
 
 
-def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
+def build_fact_positions(
+    from_date: str, to_date: str
+) -> pd.DataFrame:
     """Narrow silver down to the fact grain: FKs + measures only.
     Asset attributes (name, sector, industry, ...) live in dim_asset
     and are reached via a join on ticker, not duplicated here.
@@ -251,7 +355,8 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
     df_lookback supplies one extra prior day per ticker (read separately
     in main via read_silver_lookback_day) purely so price_change /
     daily_return_pct have a previous close to diff against on
-    incremental runs; its rows are dropped again before returning."""
+    incremental runs; its rows are dropped again before returning.
+    """
 
     sql = f"""
 
@@ -391,8 +496,14 @@ def build_fact_positions(from_date: str, to_date: str) -> pd.DataFrame:
         raise e
 
 
-def write_fact_positions(df: pd.DataFrame) -> None:
-    logger.info("Writing %d rows to %s (partitioned by ingested_date)", len(df), FACT_PATH)
+def write_fact_positions(
+    df: pd.DataFrame,
+) -> None:
+    logger.info(
+        "Writing %d rows to %s (partitioned by ingested_date)",
+        len(df),
+        FACT_PATH,
+    )
     wr.s3.to_parquet(
         df=df,
         path=FACT_PATH,
@@ -405,7 +516,11 @@ def write_fact_positions(df: pd.DataFrame) -> None:
 
 
 def write_dim_asset(df: pd.DataFrame) -> None:
-    logger.info("Writing %d rows to %s (full overwrite, SCD Type 1)", len(df), DIM_ASSET_PATH)
+    logger.info(
+        "Writing %d rows to %s (full overwrite, SCD Type 1)",
+        len(df),
+        DIM_ASSET_PATH,
+    )
     wr.s3.to_parquet(
         df=df,
         path=DIM_ASSET_PATH,
@@ -417,7 +532,11 @@ def write_dim_asset(df: pd.DataFrame) -> None:
 
 
 def write_dim_date(df: pd.DataFrame) -> None:
-    logger.info("Writing %d rows to %s (full overwrite)", len(df), DIM_DATE_PATH)
+    logger.info(
+        "Writing %d rows to %s (full overwrite)",
+        len(df),
+        DIM_DATE_PATH,
+    )
     wr.s3.to_parquet(
         df=df,
         path=DIM_DATE_PATH,
@@ -434,30 +553,44 @@ def main(event) -> None:
     to_date = event.get("to_date")
     is_backfill = bool(from_date)
 
-    dates = dates_to_process(from_date, to_date, is_backfill)
+    dates = dates_to_process(
+        from_date, to_date, is_backfill
+    )
     if not dates:
-        logger.info("No new partitions to process. Exiting.")
+        logger.info(
+            "No new partitions to process. Exiting."
+        )
         return
 
     df_silver = read_silver(dates)
     if df_silver.empty:
-        logger.info("No silver data found for target dates. Exiting without writing.")
+        logger.info(
+            "No silver data found for target dates. Exiting without writing."
+        )
         return
 
     from_date = min(dates)
     to_date = max(dates)
 
     dim_asset = build_dim_asset()
-    dim_asset = reconcile_unmapped_tickers(df_silver["ticker"], dim_asset)
+    dim_asset = reconcile_unmapped_tickers(
+        df_silver["ticker"], dim_asset
+    )
     write_dim_asset(dim_asset)
 
-    current_date = datetime.now(timezone.utc).date()
+    current_date = datetime.now(
+        timezone.utc
+    ).date()
 
-    new_dim_date_rows = build_dim_date(from_date, current_date)
+    new_dim_date_rows = build_dim_date(
+        from_date, current_date
+    )
     dim_date = merge_dim_date(new_dim_date_rows)
     write_dim_date(dim_date)
 
-    fact_t212_positions = build_fact_positions(from_date, to_date)
+    fact_t212_positions = build_fact_positions(
+        from_date, to_date
+    )
     write_fact_positions(fact_t212_positions)
 
     if not is_backfill:
@@ -465,9 +598,14 @@ def main(event) -> None:
         # the last entry in dates, see dates_to_process) must stay
         # reprocessable by later runs the same day, so the watermark
         # only ever marks days that are fully in the past.
-        set_watermark(max(dates) - timedelta(days=1))
+        set_watermark(
+            max(dates) - timedelta(days=1)
+        )
 
-    logger.info("Job complete. Dates processed: %s", [d.isoformat() for d in dates])
+    logger.info(
+        "Job complete. Dates processed: %s",
+        [d.isoformat() for d in dates],
+    )
 
 
 def lambda_handler(event, context):
@@ -482,5 +620,8 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
-    event = {"from_date": "2026-06-15", "to_date": "2026-10-25"}
+    event = {
+        "from_date": "2026-06-15",
+        "to_date": "2026-10-25",
+    }
     main(event)

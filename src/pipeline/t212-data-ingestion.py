@@ -2,23 +2,19 @@ import json
 import base64
 import logging
 import time
-
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
-
 import boto3
 from botocore.exceptions import ClientError
 
-logger = logging.getLogger()
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
 
 API_URL = "https://live.trading212.com/api/v0"
 
-secret_name = "prod/financial-dataflow/trading212"
+secret_id = "prod/financial-dataflow/trading212"
 region_name = "eu-west-1"
-
 
 _ENDPOINTS = {
     "account": {
@@ -43,27 +39,58 @@ _ENDPOINTS = {
 session = boto3.session.Session()
 
 
-def get_secret():
+def get_secret(secret_id: str):
+    """Fetch API tokens from AWS Secrets Manager."""
     try:
+        logger.info(
+            "[get_secret] Retrieving API secret_id: %s",
+            secret_id,
+            extra={
+                "event": "secrets_retrieval",
+                "secret_id": secret_id,
+                "function": get_secret.__name__,
+            },
+        )
+
         client = session.client(
             service_name="secretsmanager",
             region_name=region_name,
         )
 
-        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+        response = client.get_secret_value(
+            SecretId=secret_id
+        )
+
+        logger.info(
+            "[get_secret] Secrets retrieved successfully"
+        )
 
     except ClientError as e:
-        logger.error("[SECRETS] Failed to retrieve credentials: %s", e)
+        logger.error(
+            "[get_secret] AWS Secrets Manager error: %s",
+            e,
+        )
         raise
 
-    secret = json.loads(get_secret_value_response["SecretString"])
+    except Exception as e:
+        logger.error(
+            "[get_secret] Failed to retrieve credentials: %s",
+            e,
+        )
+        raise
 
-    return (secret.get("T212_API_TOKEN"), secret.get("T212_SECRET_TOKEN"))
+    secret = json.loads(response["SecretString"])
+
+    return (
+        secret.get("T212_API_TOKEN"),
+        secret.get("T212_SECRET_TOKEN"),
+    )
 
 
 def fetch_endpoint(
     url: str,
-    header,
+    api_token: str,
+    secret_token: str,
     response_shape: str = "list",
 ) -> tuple[list[dict], float]:
     """
@@ -77,12 +104,30 @@ def fetch_endpoint(
                   works with list[dict], regardless of endpoint.
       - "items":  payload is a paginated envelope: {"items": [...], ...}
     """
-    start = time.perf_counter()
-    try:
-        request = Request(url, headers=header, method="GET")
+    logger.info(
+        "[fetch_endpoint] Fetching endpoint: %s",
+        url,
+    )
 
-        with urlopen(request, timeout=10) as response:
-            payload = response.read().decode("utf-8")
+    start = time.perf_counter()
+
+    credentials = f"{api_token}:{secret_token}"
+    token = base64.b64encode(
+        credentials.encode("utf-8")
+    ).decode("utf-8")
+    header = {"Authorization": f"Basic {token}"}
+
+    try:
+        request = Request(
+            url, headers=header, method="GET"
+        )
+
+        with urlopen(
+            request, timeout=10
+        ) as response:
+            payload = response.read().decode(
+                "utf-8"
+            )
             result = json.loads(payload)
 
         if isinstance(result, list):
@@ -102,7 +147,8 @@ def fetch_endpoint(
         duration = time.perf_counter() - start
 
         logger.info(
-            "[API] Data retrieved successfully | " "records=%d | duration=%.2fs",
+            "[fetch_endpoint] Data retrieved successfully | "
+            "records=%d | duration=%.2fs",
             len(records),
             duration,
         )
@@ -112,7 +158,8 @@ def fetch_endpoint(
     except Exception as e:
         duration = time.perf_counter() - start
         logger.error(
-            "[API] Failed to retrieve data from %s | " "duration=%.2fs | error=%s",
+            "[fetch_endpoint] Failed to retrieve data from %s | "
+            "duration=%.2fs | error=%s",
             url,
             duration,
             e,
@@ -121,9 +168,15 @@ def fetch_endpoint(
         raise
 
 
-def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
+def save_to_s3(
+    data: list[dict], bucket_name: str, key: str
+) -> float:
     """Save data to S3."""
-
+    logger.info(
+        "[save_to_s3] Uploading data, destination=s3://%s/%s",
+        bucket_name,
+        key,
+    )
     start = time.perf_counter()
     count_records = len(data)
 
@@ -145,21 +198,30 @@ def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
             for pos in data
         ]
 
-        body = "\n".join(json.dumps(record) for record in data)
+        body = "\n".join(
+            json.dumps(record) for record in data
+        )
 
         logger.info(
-            "[S3] Uploading data | " "records=%d | destination=s3://%s/%s",
+            "[save_to_s3] Uploading data | "
+            "records=%d | destination=s3://%s/%s",
             count_records,
             bucket_name,
             key,
         )
 
-        client.put_object(Bucket=bucket_name, Key=key, Body=body, ContentType="application/json")
+        client.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+        )
 
         duration = time.perf_counter() - start
 
         logger.info(
-            "[S3] Data written successfully | " "records=%d | duration=%.2fs",
+            "[save_to_s3] Data written successfully | "
+            "records=%d | duration=%.2fs",
             count_records,
             duration,
         )
@@ -169,7 +231,8 @@ def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
         duration = time.perf_counter() - start
 
         logger.error(
-            "[S3] Upload failed | " "records=%d | duration=%.2fs | error=%s",
+            "[save_to_s3] Upload failed | "
+            "records=%d | duration=%.2fs | error=%s",
             count_records,
             duration,
             e,
@@ -184,16 +247,17 @@ def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
         )
 
         logger.error(
-            "[S3] Data written to dead-letter location | " "destination=s3://%s/dead-letters/%s",
+            "[save_to_s3] Data written to dead-letter location | "
+            "destination=s3://%s/dead-letters/%s",
             bucket_name,
             key,
         )
         raise
 
 
-def lambda_handler(event, context):
+def main(event, context):
     logger.info("=" * 60)
-    logger.info("Trading212 Pipeline Execution")
+    logger.info("Trading212 Ingestion Execution")
     logger.info("=" * 60)
 
     pipeline_start = time.perf_counter()
@@ -202,21 +266,13 @@ def lambda_handler(event, context):
     # Secrets
     # ---------------------------------------------------------
 
-    logger.info("[SECRETS] Retrieving API credentials")
-
-    API_TOKEN, SECRET_TOKEN = get_secret()
-
-    logger.info("[SECRETS] Credentials retrieved successfully")
+    API_TOKEN, SECRET_TOKEN = get_secret(
+        secret_id
+    )
 
     # ---------------------------------------------------------
     # Trading212 API
     # ---------------------------------------------------------
-
-    credentials = f"{API_TOKEN}:{SECRET_TOKEN}"
-
-    token = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
-
-    header = {"Authorization": f"Basic {token}"}
 
     # Per-endpoint metrics, keyed by endpoint name, so nothing gets
     # overwritten when there's more than one endpoint in _ENDPOINTS.
@@ -228,11 +284,18 @@ def lambda_handler(event, context):
 
         endpoint = v.get("endpoint")
         bucket_name = v.get("bucket_name")
-        response_shape = v.get("response_shape", "list")
+        response_shape = v.get(
+            "response_shape", "list"
+        )
 
         url = urljoin(f"{API_URL}/", endpoint)
 
-        res, api_duration = fetch_endpoint(url, header, response_shape)
+        res, api_duration = fetch_endpoint(
+            url,
+            API_TOKEN,
+            SECRET_TOKEN,
+            response_shape,
+        )
 
         record_count = len(res)
 
@@ -252,7 +315,9 @@ def lambda_handler(event, context):
             f"{now.strftime('%Y%m%dT%H%M%S')}.json"
         )
 
-        s3_duration = save_to_s3(res, bucket_name, key)
+        s3_duration = save_to_s3(
+            res, bucket_name, key
+        )
 
         endpoint_metrics[k] = {
             "records": record_count,
@@ -264,8 +329,13 @@ def lambda_handler(event, context):
     # Execution Summary
     # ---------------------------------------------------------
 
-    total_duration = time.perf_counter() - pipeline_start
-    total_records = sum(m["records"] for m in endpoint_metrics.values())
+    total_duration = (
+        time.perf_counter() - pipeline_start
+    )
+    total_records = sum(
+        m["records"]
+        for m in endpoint_metrics.values()
+    )
 
     logger.info("")
     logger.info("-" * 60)
@@ -290,12 +360,26 @@ def lambda_handler(event, context):
     )
 
     logger.info("=" * 60)
-    logger.info("Trading212 Pipeline Completed Successfully")
+    logger.info(
+        "Trading212 Ingestion Completed Successfully"
+    )
     logger.info("=" * 60)
 
     return {
         "statusCode": 200,
         "records": total_records,
         "endpoints": endpoint_metrics,
-        "duration_seconds": round(total_duration, 2),
+        "duration_seconds": round(
+            total_duration, 2
+        ),
     }
+
+
+def lambda_handler(event, context):
+    return main(event, context)
+
+
+if __name__ == "__main__":
+    print("Starting local execution...")
+    result = main()
+    print("Execution Result:", result)

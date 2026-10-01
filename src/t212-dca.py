@@ -7,7 +7,6 @@ from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from uuid import uuid4
-
 import awswrangler as wr
 import boto3
 from botocore.exceptions import ClientError
@@ -16,7 +15,9 @@ from botocore.exceptions import ClientError
 try:
     import certifi
 
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    ssl_context = ssl.create_default_context(
+        cafile=certifi.where()
+    )
 except ImportError:
     ssl_context = ssl._create_unverified_context()
 
@@ -25,7 +26,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Configuration Constants
-SES_REGION = "eu-west-1"
+region_name = "eu-west-1"
 SECRET_NAME = "prod/financial/t212-dca-automation"
 
 DATABASE = "financials"
@@ -39,31 +40,76 @@ EQUITY = 5
 MAX_DRAWDOWN_THRESHOLD = -1.0
 MIN_DRAWDOWN_THRESHOLD = -2.5
 
-NOTIFICATION_EMAIL = "akinkunmimustapha1@gmail.com"
+NOTIFICATION_EMAIL = (
+    "akinkunmimustapha1@gmail.com"
+)
+
+session = boto3.session.Session()
 
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
 
 
-def get_credentials(secret_name: str):
+def get_secret(secret_id: str):
     """Fetch API tokens from AWS Secrets Manager."""
+    logger.info(
+        "[get_secret] Retrieving API secret_id: %s",
+        secret_id,
+        extra={
+            "event": "secrets_retrieval",
+            "secret_id": secret_id,
+            "function": get_secret.__name__,
+        },
+    )
+
     try:
-        logger.info("Fetching secrets: %s", secret_name)
-        client = boto3.client("secretsmanager")
-        response = client.get_secret_value(SecretId=secret_name)
-        secret = json.loads(response.get("SecretString", "{}"))
-        return secret.get("T212_API_TOKEN"), secret.get("T212_SECRET_TOKEN")
+
+        client = session.client(
+            service_name="secretsmanager",
+            region_name=region_name,
+        )
+
+        response = client.get_secret_value(
+            SecretId=secret_id
+        )
+
+        logger.info(
+            "[get_secret] Secrets retrieved successfully"
+        )
+
     except ClientError as e:
-        logger.error("AWS Secrets Manager error: %s", e)
-        return None, None
+        logger.error(
+            "[get_secret] AWS Secrets Manager error: %s",
+            e,
+        )
+        raise
+
     except Exception as e:
-        logger.error("Unexpected error fetching secrets: %s", e)
-        return None, None
+        logger.error(
+            "[get_secret] Failed to retrieve credentials: %s",
+            e,
+        )
+        raise
+
+    secret = json.loads(response["SecretString"])
+
+    return (
+        secret.get("T212_API_TOKEN"),
+        secret.get("T212_SECRET_TOKEN"),
+    )
 
 
-def get_latest_position(ticker: str, database: str):
+def get_latest_position(
+    ticker: str, database: str
+):
     """Fetch latest position metrics and current price from Athena."""
+
+    logger.info(
+        "[get_latest_position] Fetching position data for ticker: %s",
+        ticker,
+    )
+
     sql = f"""
     SELECT daily_value_change_pct, current_value, avg_value_7d, current_price
     FROM fact_t212_positions
@@ -71,40 +117,76 @@ def get_latest_position(ticker: str, database: str):
     ORDER BY ingested_timestamp DESC
     LIMIT 1;
     """
+
     try:
-        logger.info("Fetching position data for ticker: %s", ticker)
         df = wr.athena.read_sql_query(
             sql=sql,
             database=database,
             s3_output="s3://financial-dataflow/query-results/",
         )
         if df.empty:
-            logger.warning("Athena query returned 0 rows for ticker: %s", ticker)
+            logger.warning(
+                "Athena query returned 0 rows for ticker: %s",
+                ticker,
+            )
             return None
 
         # Extract current_price column if available in fact table
         current_price = (
-            float(df["current_price"].iloc[0]) if "current_price" in df.columns else None
+            float(df["current_price"].iloc[0])
+            if "current_price" in df.columns
+            else None
+        )
+
+        logger.info(
+            "[get_latest_position] Fetched position data for ticker: %s",
+            ticker,
         )
 
         return {
-            "change_pct": float(df["daily_value_change_pct"].iloc[0]),
-            "current_value": float(df["current_value"].iloc[0]),
-            "avg_value_7d": float(df["avg_value_7d"].iloc[0]),
+            "change_pct": float(
+                df["daily_value_change_pct"].iloc[
+                    0
+                ]
+            ),
+            "current_value": float(
+                df["current_value"].iloc[0]
+            ),
+            "avg_value_7d": float(
+                df["avg_value_7d"].iloc[0]
+            ),
             "current_price": current_price,
         }
     except Exception as e:
-        logger.error("Athena query failed: %s", e)
+        logger.error(
+            "[get_latest_position] Athena query failed: %s",
+            e,
+        )
         return None
 
 
 def execute_market_order(
-    domain: str, endpoint: str, api_token: str, secret_token: str, payload: dict
+    domain: str,
+    endpoint: str,
+    api_token: str,
+    secret_token: str,
+    payload: dict,
 ):
     """Trigger market order via Trading 212 API using urllib."""
 
+    logger.info(
+        "[execute_market_order] Executing market order: %s",
+        endpoint,
+        extra={
+            "domain": domain,
+            "endpoint": endpoint,
+        },
+    )
+
     credentials = f"{api_token}:{secret_token}"
-    token = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
+    token = base64.b64encode(
+        credentials.encode("utf-8")
+    ).decode("utf-8")
 
     headers = {
         "Authorization": f"Basic {token}",
@@ -113,60 +195,114 @@ def execute_market_order(
     }
 
     url = urljoin(domain, endpoint)
-    json_data = json.dumps(payload).encode("utf-8")
+    json_data = json.dumps(payload).encode(
+        "utf-8"
+    )
 
     try:
-        logger.info("POST %s", url)
-        logger.info("Payload: %s", payload)
 
-        request = Request(url=url, data=json_data, headers=headers, method="POST")
+        request = Request(
+            url=url,
+            data=json_data,
+            headers=headers,
+            method="POST",
+        )
 
-        with urlopen(request, timeout=10, context=ssl_context) as response:
+        with urlopen(
+            request,
+            timeout=10,
+            context=ssl_context,
+        ) as response:
 
-            res_body = response.read().decode("utf-8")
+            res_body = response.read().decode(
+                "utf-8"
+            )
 
-            logger.info("Trading 212 response [%s]: %s", response.status, res_body)
+            logger.info(
+                "[execute_market_order] SUCCESS",
+                extra={
+                    "domain": domain,
+                    "endpoint": endpoint,
+                },
+            )
 
-            return json.loads(res_body) if res_body else {"status": "success"}
+            return (
+                json.loads(res_body)
+                if res_body
+                else {"status": "success"}
+            )
 
     except HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="replace")
+        error_body = e.read().decode(
+            "utf-8", errors="replace"
+        )
 
-        logger.error("Trading 212 HTTP %s: %s", e.code, error_body)
+        logger.error(
+            "[execute_market_order] Trading 212 HTTP %s: %s",
+            e.code,
+            error_body,
+        )
 
         return None
 
     except URLError as e:
-        logger.error("Network error: %s", e)
+        logger.error(
+            "[execute_market_order] Network error: %s",
+            e,
+        )
 
         return None
 
     except Exception:
-        logger.exception("Unexpected error placing market order")
+        logger.exception(
+            "[execute_market_order] Unexpected error placing market order"
+        )
 
         return None
 
 
-def log_trade(table_name: str, ticker: str, value: float, quantity: float, order_result):
+def log_trade(
+    table_name: str,
+    ticker: str,
+    value: float,
+    quantity: float,
+    order_result,
+):
     """Record executed trade entry with calculated quantity into DynamoDB."""
+
+    logger.info(
+        "[log_trade] Loggin Trade, table: %s",
+        table_name,
+    )
+
     trade = {
         "trade_id": str(uuid4()),
         "vendor": "trading-212",
         "trader": "T212 DCA Automation",
         "asset": ticker,
         "value": value,
-        "quantity": str(round(quantity, 6)) if quantity else "",
-        "additional_info": json.dumps(order_result),
-        "created_datetime": datetime.now(timezone.utc).isoformat(),
+        "quantity": (
+            str(round(quantity, 6))
+            if quantity
+            else ""
+        ),
+        "additional_info": json.dumps(
+            order_result
+        ),
+        "created_datetime": datetime.now(
+            timezone.utc
+        ).isoformat(),
     }
     try:
-        logger.info("Writing trade log to DynamoDB table: %s", table_name)
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(table_name)
         table.put_item(Item=trade)
         return trade
     except Exception as e:
-        logger.error("DynamoDB write failed: %s", e)
+        logger.error(
+            "[log_trade] DynamoDB write failed: %s",
+            e,
+        )
         return None
 
 
@@ -180,10 +316,14 @@ def send_notification(
     order_result: dict,
 ):
     """Send an email notification after a successful market order."""
+    logger.info(
+        f"[{send_notification.__name__}] Sending trade notification to: %s",
+        recipient,
+    )
 
     ses_client = boto3.client(
         "ses",
-        region_name=SES_REGION,
+        region_name=region_name,
     )
 
     order_id = order_result.get("id", "N/A")
@@ -206,10 +346,6 @@ Order response:
 """
 
     try:
-        logger.info(
-            "Sending trade notification to: %s",
-            recipient,
-        )
 
         response = ses_client.send_email(
             Source=NOTIFICATION_EMAIL,
@@ -231,7 +367,7 @@ Order response:
         )
 
         logger.info(
-            "Notification sent successfully. SES MessageId: %s",
+            f"[{send_notification.__name__}] Notification sent successfully. SES MessageId: %s",
             response.get("MessageId"),
         )
 
@@ -239,13 +375,15 @@ Order response:
 
     except ClientError as e:
         logger.error(
-            "SES notification failed: %s",
+            f"[{send_notification.__name__}] SES notification failed: %s",
             e,
         )
         return None
 
     except Exception:
-        logger.exception("Unexpected error sending notification")
+        logger.exception(
+            f"[{send_notification.__name__}] Unexpected error sending notification"
+        )
         return None
 
 
@@ -256,15 +394,30 @@ Order response:
 
 def main(event=None, context=None):
     """Core DCA logic execution."""
+
+    logger.info("=" * 60)
+    logger.info("Trading212 DCA Execution")
+    logger.info("=" * 60)
+
     # 1. Credentials
-    api_token, secret_token = get_credentials(SECRET_NAME)
+    api_token, secret_token = get_secret(
+        SECRET_NAME
+    )
     if not api_token:
-        return {"statusCode": 500, "body": "Failed to retrieve credentials"}
+        return {
+            "statusCode": 500,
+            "body": "Failed to retrieve credentials",
+        }
 
     # 2. Athena Position Data
-    metrics = get_latest_position(TICKER, DATABASE)
+    metrics = get_latest_position(
+        TICKER, DATABASE
+    )
     if not metrics:
-        return {"statusCode": 500, "body": "Failed to retrieve position metrics"}
+        return {
+            "statusCode": 500,
+            "body": "Failed to retrieve position metrics",
+        }
 
     change_pct = metrics["change_pct"]
     current_value = metrics["current_value"]
@@ -272,18 +425,32 @@ def main(event=None, context=None):
     current_price = metrics.get("current_price")
 
     # Calculate expected quantity: Quantity = Equity Amount / Current Price
-    calculated_quantity = (EQUITY / current_price) if (current_price and current_price > 0) else 0.0
-    logger.info("Calculated quantity: %s", calculated_quantity)
+    calculated_quantity = (
+        (EQUITY / current_price)
+        if (current_price and current_price > 0)
+        else 0.0
+    )
+    logger.info(
+        "Calculated quantity: %s",
+        calculated_quantity,
+    )
 
     # 3. DCA Rule Checks
-    if not (MIN_DRAWDOWN_THRESHOLD <= change_pct <= MAX_DRAWDOWN_THRESHOLD):
+    if not (
+        MIN_DRAWDOWN_THRESHOLD
+        <= change_pct
+        <= MAX_DRAWDOWN_THRESHOLD
+    ):
         logger.info(
             "Drawdown %.2f%% outside [%.2f%%, %.2f%%]. Skipping buy.",
             change_pct,
             MIN_DRAWDOWN_THRESHOLD,
             MAX_DRAWDOWN_THRESHOLD,
         )
-        return {"statusCode": 200, "body": "Drawdown condition not met"}
+        return {
+            "statusCode": 200,
+            "body": "Drawdown condition not met",
+        }
 
     if current_value >= avg_value_7d:
         logger.info(
@@ -291,7 +458,10 @@ def main(event=None, context=None):
             current_value,
             avg_value_7d,
         )
-        return {"statusCode": 200, "body": "7d Average condition not met"}
+        return {
+            "statusCode": 200,
+            "body": "7d Average condition not met",
+        }
 
     # 4. Prepare & Trigger Market Order
     payload = {
@@ -300,10 +470,19 @@ def main(event=None, context=None):
         "extendedHours": False,
     }
 
-    order_result = execute_market_order(DOMAIN, ENDPOINT, api_token, secret_token, payload)
+    order_result = execute_market_order(
+        DOMAIN,
+        ENDPOINT,
+        api_token,
+        secret_token,
+        payload,
+    )
 
     if not order_result:
-        return {"statusCode": 500, "body": "Market order execution failed"}
+        return {
+            "statusCode": 500,
+            "body": "Market order execution failed",
+        }
 
     # 5. Log Trade
     trade = log_trade(
@@ -315,7 +494,9 @@ def main(event=None, context=None):
     )
 
     if not trade:
-        logger.warning("Order was placed, but failed to log trade to DynamoDB.")
+        logger.warning(
+            "Order was placed, but failed to log trade to DynamoDB."
+        )
 
     # 6. Send notification
     notification = send_notification(
@@ -329,7 +510,14 @@ def main(event=None, context=None):
     )
 
     if not notification:
-        logger.warning("Trade was executed, but notification failed.")
+        logger.warning(
+            "Trade was executed, but notification failed."
+        )
+
+    logger.info("")
+    logger.info("-" * 60)
+    logger.info("END Trading212 DCA Execution")
+    logger.info("-" * 60)
 
     return {
         "statusCode": 200,
@@ -337,7 +525,8 @@ def main(event=None, context=None):
             {
                 "status": "order_executed",
                 "trade": trade,
-                "notification_sent": notification is not None,
+                "notification_sent": notification
+                is not None,
             }
         ),
     }
