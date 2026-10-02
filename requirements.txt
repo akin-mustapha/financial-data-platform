@@ -11,3 +11,5 @@ botocore[crt]
 awswrangler
 ipykernel
 httpx
+pydantic
+pydantic-settings
