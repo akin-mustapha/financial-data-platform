@@ -57,13 +57,9 @@ def get_secret(secret_id: str):
             region_name=region_name,
         )
 
-        response = client.get_secret_value(
-            SecretId=secret_id
-        )
+        response = client.get_secret_value(SecretId=secret_id)
 
-        logger.info(
-            "[get_secret] Secrets retrieved successfully"
-        )
+        logger.info("[get_secret] Secrets retrieved successfully")
 
     except ClientError as e:
         logger.error(
@@ -112,22 +108,14 @@ def fetch_endpoint(
     start = time.perf_counter()
 
     credentials = f"{api_token}:{secret_token}"
-    token = base64.b64encode(
-        credentials.encode("utf-8")
-    ).decode("utf-8")
+    token = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
     header = {"Authorization": f"Basic {token}"}
 
     try:
-        request = Request(
-            url, headers=header, method="GET"
-        )
+        request = Request(url, headers=header, method="GET")
 
-        with urlopen(
-            request, timeout=10
-        ) as response:
-            payload = response.read().decode(
-                "utf-8"
-            )
+        with urlopen(request, timeout=10) as response:
+            payload = response.read().decode("utf-8")
             result = json.loads(payload)
 
         if isinstance(result, list):
@@ -168,9 +156,7 @@ def fetch_endpoint(
         raise
 
 
-def save_to_s3(
-    data: list[dict], bucket_name: str, key: str
-) -> float:
+def save_to_s3(data: list[dict], bucket_name: str, key: str) -> float:
     """Save data to S3."""
     logger.info(
         "[save_to_s3] Uploading data, destination=s3://%s/%s",
@@ -198,13 +184,10 @@ def save_to_s3(
             for pos in data
         ]
 
-        body = "\n".join(
-            json.dumps(record) for record in data
-        )
+        body = "\n".join(json.dumps(record) for record in data)
 
         logger.info(
-            "[save_to_s3] Uploading data | "
-            "records=%d | destination=s3://%s/%s",
+            "[save_to_s3] Uploading data | " "records=%d | destination=s3://%s/%s",
             count_records,
             bucket_name,
             key,
@@ -220,8 +203,7 @@ def save_to_s3(
         duration = time.perf_counter() - start
 
         logger.info(
-            "[save_to_s3] Data written successfully | "
-            "records=%d | duration=%.2fs",
+            "[save_to_s3] Data written successfully | " "records=%d | duration=%.2fs",
             count_records,
             duration,
         )
@@ -231,8 +213,7 @@ def save_to_s3(
         duration = time.perf_counter() - start
 
         logger.error(
-            "[save_to_s3] Upload failed | "
-            "records=%d | duration=%.2fs | error=%s",
+            "[save_to_s3] Upload failed | " "records=%d | duration=%.2fs | error=%s",
             count_records,
             duration,
             e,
@@ -266,9 +247,7 @@ def main(event, context):
     # Secrets
     # ---------------------------------------------------------
 
-    API_TOKEN, SECRET_TOKEN = get_secret(
-        secret_id
-    )
+    API_TOKEN, SECRET_TOKEN = get_secret(secret_id)
 
     # ---------------------------------------------------------
     # Trading212 API
@@ -284,9 +263,7 @@ def main(event, context):
 
         endpoint = v.get("endpoint")
         bucket_name = v.get("bucket_name")
-        response_shape = v.get(
-            "response_shape", "list"
-        )
+        response_shape = v.get("response_shape", "list")
 
         url = urljoin(f"{API_URL}/", endpoint)
 
@@ -315,9 +292,7 @@ def main(event, context):
             f"{now.strftime('%Y%m%dT%H%M%S')}.json"
         )
 
-        s3_duration = save_to_s3(
-            res, bucket_name, key
-        )
+        s3_duration = save_to_s3(res, bucket_name, key)
 
         endpoint_metrics[k] = {
             "records": record_count,
@@ -329,13 +304,8 @@ def main(event, context):
     # Execution Summary
     # ---------------------------------------------------------
 
-    total_duration = (
-        time.perf_counter() - pipeline_start
-    )
-    total_records = sum(
-        m["records"]
-        for m in endpoint_metrics.values()
-    )
+    total_duration = time.perf_counter() - pipeline_start
+    total_records = sum(m["records"] for m in endpoint_metrics.values())
 
     logger.info("")
     logger.info("-" * 60)
@@ -360,18 +330,14 @@ def main(event, context):
     )
 
     logger.info("=" * 60)
-    logger.info(
-        "Trading212 Ingestion Completed Successfully"
-    )
+    logger.info("Trading212 Ingestion Completed Successfully")
     logger.info("=" * 60)
 
     return {
         "statusCode": 200,
         "records": total_records,
         "endpoints": endpoint_metrics,
-        "duration_seconds": round(
-            total_duration, 2
-        ),
+        "duration_seconds": round(total_duration, 2),
     }
 
 

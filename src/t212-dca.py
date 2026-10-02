@@ -10,20 +10,38 @@ from uuid import uuid4
 import awswrangler as wr
 import boto3
 from botocore.exceptions import ClientError
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+)
+from pydantic import BaseModel, Field
 
 # Attempt to load certifi for local SSL certificate verification (Mac fix)
 try:
     import certifi
 
-    ssl_context = ssl.create_default_context(
-        cafile=certifi.where()
-    )
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
     ssl_context = ssl._create_unverified_context()
 
 # Logging Configuration
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+class Settings(BaseSettings):
+    api_domain: str
+    api_enpoint: str
+    api_secret_id: str
+    ticker: str
+    equtity: float
+    max_drawdown_threshold: float
+    min_drawdown_threshold: float
+    database: str
+    log_database: str
+    log_table: str
+    notification_email: str
+
 
 # Configuration Constants
 region_name = "eu-west-1"
@@ -40,15 +58,19 @@ EQUITY = 5
 MAX_DRAWDOWN_THRESHOLD = -1.0
 MIN_DRAWDOWN_THRESHOLD = -2.5
 
-NOTIFICATION_EMAIL = (
-    "akinkunmimustapha1@gmail.com"
-)
+NOTIFICATION_EMAIL = "akinkunmimustapha1@gmail.com"
 
 session = boto3.session.Session()
 
 # ==========================================
 # HELPER FUNCTIONS
 # ==========================================
+
+
+class APISecret(BaseModel):
+    secret_id: str
+    api_token: str
+    secret_token: str
 
 
 def get_secret(secret_id: str):
@@ -70,13 +92,9 @@ def get_secret(secret_id: str):
             region_name=region_name,
         )
 
-        response = client.get_secret_value(
-            SecretId=secret_id
-        )
+        response = client.get_secret_value(SecretId=secret_id)
 
-        logger.info(
-            "[get_secret] Secrets retrieved successfully"
-        )
+        logger.info("[get_secret] Secrets retrieved successfully")
 
     except ClientError as e:
         logger.error(
@@ -99,10 +117,22 @@ def get_secret(secret_id: str):
         secret.get("T212_SECRET_TOKEN"),
     )
 
+    return APISecret(
+        secret_id=secret_id,
+        api_token=secret.get("T212_API_TOKEN"),
+        secret_token=secret.get("T212_SECRET_TOKEN"),
+    )
 
-def get_latest_position(
-    ticker: str, database: str
-):
+
+class Position(BaseModel):
+    ticker: str
+    change_pct: float
+    current_value: float
+    avg_value_7d: float
+    current_price: float
+
+
+def get_latest_position(ticker: str, database: str):
     """Fetch latest position metrics and current price from Athena."""
 
     logger.info(
@@ -111,7 +141,7 @@ def get_latest_position(
     )
 
     sql = f"""
-    SELECT daily_value_change_pct, current_value, avg_value_7d, current_price
+    SELECT ticker, daily_value_change_pct, current_value, avg_value_7d, current_price
     FROM fact_t212_positions
     WHERE ticker = '{ticker}'
     ORDER BY ingested_timestamp DESC
@@ -144,17 +174,9 @@ def get_latest_position(
         )
 
         return {
-            "change_pct": float(
-                df["daily_value_change_pct"].iloc[
-                    0
-                ]
-            ),
-            "current_value": float(
-                df["current_value"].iloc[0]
-            ),
-            "avg_value_7d": float(
-                df["avg_value_7d"].iloc[0]
-            ),
+            "change_pct": float(df["daily_value_change_pct"].iloc[0]),
+            "current_value": float(df["current_value"].iloc[0]),
+            "avg_value_7d": float(df["avg_value_7d"].iloc[0]),
             "current_price": current_price,
         }
     except Exception as e:
@@ -184,9 +206,7 @@ def execute_market_order(
     )
 
     credentials = f"{api_token}:{secret_token}"
-    token = base64.b64encode(
-        credentials.encode("utf-8")
-    ).decode("utf-8")
+    token = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
     headers = {
         "Authorization": f"Basic {token}",
@@ -195,9 +215,7 @@ def execute_market_order(
     }
 
     url = urljoin(domain, endpoint)
-    json_data = json.dumps(payload).encode(
-        "utf-8"
-    )
+    json_data = json.dumps(payload).encode("utf-8")
 
     try:
 
@@ -214,9 +232,7 @@ def execute_market_order(
             context=ssl_context,
         ) as response:
 
-            res_body = response.read().decode(
-                "utf-8"
-            )
+            res_body = response.read().decode("utf-8")
 
             logger.info(
                 "[execute_market_order] SUCCESS",
@@ -226,16 +242,10 @@ def execute_market_order(
                 },
             )
 
-            return (
-                json.loads(res_body)
-                if res_body
-                else {"status": "success"}
-            )
+            return json.loads(res_body) if res_body else {"status": "success"}
 
     except HTTPError as e:
-        error_body = e.read().decode(
-            "utf-8", errors="replace"
-        )
+        error_body = e.read().decode("utf-8", errors="replace")
 
         logger.error(
             "[execute_market_order] Trading 212 HTTP %s: %s",
@@ -254,9 +264,7 @@ def execute_market_order(
         return None
 
     except Exception:
-        logger.exception(
-            "[execute_market_order] Unexpected error placing market order"
-        )
+        logger.exception("[execute_market_order] Unexpected error placing market order")
 
         return None
 
@@ -281,17 +289,9 @@ def log_trade(
         "trader": "T212 DCA Automation",
         "asset": ticker,
         "value": value,
-        "quantity": (
-            str(round(quantity, 6))
-            if quantity
-            else ""
-        ),
-        "additional_info": json.dumps(
-            order_result
-        ),
-        "created_datetime": datetime.now(
-            timezone.utc
-        ).isoformat(),
+        "quantity": (str(round(quantity, 6)) if quantity else ""),
+        "additional_info": json.dumps(order_result),
+        "created_datetime": datetime.now(timezone.utc).isoformat(),
     }
     try:
         dynamodb = boto3.resource("dynamodb")
@@ -388,11 +388,11 @@ Order response:
 
 
 # ==========================================
-# MAIN ORCHESTRATOR
+# # MAIN ORCHESTRATOR
 # ==========================================
 
 
-def main(event=None, context=None):
+def main(settings):
     """Core DCA logic execution."""
 
     logger.info("=" * 60)
@@ -400,9 +400,10 @@ def main(event=None, context=None):
     logger.info("=" * 60)
 
     # 1. Credentials
-    api_token, secret_token = get_secret(
-        SECRET_NAME
-    )
+    api_token, secret_token = get_secret(settings.get("api_secret_id"))
+
+    api_secret: APISecret = get_secret(settings.get("api_secret_id"))
+
     if not api_token:
         return {
             "statusCode": 500,
@@ -410,9 +411,7 @@ def main(event=None, context=None):
         }
 
     # 2. Athena Position Data
-    metrics = get_latest_position(
-        TICKER, DATABASE
-    )
+    metrics = get_latest_position(settings.get("ticker"), settings.get("database"))
     if not metrics:
         return {
             "statusCode": 500,
@@ -426,7 +425,7 @@ def main(event=None, context=None):
 
     # Calculate expected quantity: Quantity = Equity Amount / Current Price
     calculated_quantity = (
-        (EQUITY / current_price)
+        (settings.get("equity") / current_price)
         if (current_price and current_price > 0)
         else 0.0
     )
@@ -436,16 +435,12 @@ def main(event=None, context=None):
     )
 
     # 3. DCA Rule Checks
-    if not (
-        MIN_DRAWDOWN_THRESHOLD
-        <= change_pct
-        <= MAX_DRAWDOWN_THRESHOLD
-    ):
+    if not (MIN_DRAWDOWN_THRESHOLD <= change_pct <= MAX_DRAWDOWN_THRESHOLD):
         logger.info(
             "Drawdown %.2f%% outside [%.2f%%, %.2f%%]. Skipping buy.",
             change_pct,
-            MIN_DRAWDOWN_THRESHOLD,
-            MAX_DRAWDOWN_THRESHOLD,
+            settings.get("min_drawdown_threshold"),
+            settings.get("max_drawdown_threshold"),
         )
         return {
             "statusCode": 200,
@@ -465,7 +460,7 @@ def main(event=None, context=None):
 
     # 4. Prepare & Trigger Market Order
     payload = {
-        "ticker": TICKER,
+        "ticker": settings.get("ticker"),
         "quantity": round(calculated_quantity, 4),
         "extendedHours": False,
     }
@@ -473,9 +468,9 @@ def main(event=None, context=None):
     order_result = execute_market_order(
         DOMAIN,
         ENDPOINT,
-        api_token,
-        secret_token,
-        payload,
+        api_token=api_secret.get("api_token"),
+        secret_token=api_secret.get("secret_token"),
+        payload=payload,
     )
 
     if not order_result:
@@ -486,23 +481,21 @@ def main(event=None, context=None):
 
     # 5. Log Trade
     trade = log_trade(
-        TRADE_LOG_TABLE_NAME,
-        TICKER,
-        EQUITY,
+        settings.get("log_table"),
+        settings.get("ticker"),
+        settings.get("equity"),
         calculated_quantity,
         order_result,
     )
 
     if not trade:
-        logger.warning(
-            "Order was placed, but failed to log trade to DynamoDB."
-        )
+        logger.warning("Order was placed, but failed to log trade to DynamoDB.")
 
     # 6. Send notification
     notification = send_notification(
-        recipient=NOTIFICATION_EMAIL,
-        ticker=TICKER,
-        equity=EQUITY,
+        recipient=settings.get("notification_email"),
+        ticker=settings.get("ticker"),
+        equity=settings.get("equity"),
         quantity=calculated_quantity,
         change_pct=change_pct,
         current_price=current_price,
@@ -510,9 +503,7 @@ def main(event=None, context=None):
     )
 
     if not notification:
-        logger.warning(
-            "Trade was executed, but notification failed."
-        )
+        logger.warning("Trade was executed, but notification failed.")
 
     logger.info("")
     logger.info("-" * 60)
@@ -525,8 +516,7 @@ def main(event=None, context=None):
             {
                 "status": "order_executed",
                 "trade": trade,
-                "notification_sent": notification
-                is not None,
+                "notification_sent": notification is not None,
             }
         ),
     }
@@ -538,7 +528,21 @@ def main(event=None, context=None):
 
 
 def lambda_handler(event, context):
-    return main(event, context)
+    settings = Settings(
+        api_domain="https://live.trading212.com/api/v0/",
+        api_enpoint="equity/orders/market",
+        api_secret_id="prod/financial/t212-dca-automation",
+        ticker="VWRPl_EQ",
+        equtity=5,
+        max_drawdown_threshold=-1.0,
+        min_drawdown_threshold=-2.5,
+        database="financials",
+        log_database="financials",
+        log_table="trade_log",
+        notification_email="akinkunmimustapha1@gmail.com",
+    )
+
+    return main(settings)
 
 
 if __name__ == "__main__":

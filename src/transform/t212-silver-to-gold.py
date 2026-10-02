@@ -56,14 +56,10 @@ FACT_TABLE = "fact_positions"
 FACT_PATH = "s3://financial-dataflow/data/gold/fact_positions/"
 
 DIM_ASSET_TABLE = "dim_asset"
-DIM_ASSET_PATH = (
-    "s3://financial-dataflow/data/gold/dim_asset/"
-)
+DIM_ASSET_PATH = "s3://financial-dataflow/data/gold/dim_asset/"
 
 DIM_DATE_TABLE = "dim_date"
-DIM_DATE_PATH = (
-    "s3://financial-dataflow/data/gold/dim_date/"
-)
+DIM_DATE_PATH = "s3://financial-dataflow/data/gold/dim_date/"
 
 args = getResolvedOptions(sys.argv, ["JOB_NAME"])
 logger = logging.getLogger(args["JOB_NAME"])
@@ -85,9 +81,7 @@ _parser.add_argument(
     default=None,
     help="YYYY-MM-DD, backfill end (inclusive). Defaults to today if omitted.",
 )
-BACKFILL_ARGS, _ = _parser.parse_known_args(
-    sys.argv[1:]
-)
+BACKFILL_ARGS, _ = _parser.parse_known_args(sys.argv[1:])
 IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
 
 
@@ -96,12 +90,8 @@ IS_BACKFILL = bool(BACKFILL_ARGS.START_DATE)
 # ---------------------------------------------------------------------
 def get_watermark() -> Optional[date]:
     try:
-        state = wr.s3.read_json(
-            STATE_PATH, lines=False
-        )
-        return pd.to_datetime(
-            state["last_processed_date"].iloc[0]
-        ).date()
+        state = wr.s3.read_json(STATE_PATH, lines=False)
+        return pd.to_datetime(state["last_processed_date"].iloc[0]).date()
     except Exception:
         logger.info(
             "No watermark found at %s — treating this as the first run",
@@ -112,29 +102,17 @@ def get_watermark() -> Optional[date]:
 
 def set_watermark(new_date: date) -> None:
     wr.s3.to_json(
-        df=pd.DataFrame(
-            [
-                {
-                    "last_processed_date": new_date.isoformat()
-                }
-            ]
-        ),
+        df=pd.DataFrame([{"last_processed_date": new_date.isoformat()}]),
         path=STATE_PATH,
     )
-    logger.info(
-        "Watermark advanced to %s", new_date
-    )
+    logger.info("Watermark advanced to %s", new_date)
 
 
 def dates_to_process() -> List[date]:
     if IS_BACKFILL:
-        start = pd.to_datetime(
-            BACKFILL_ARGS.START_DATE
-        ).date()
+        start = pd.to_datetime(BACKFILL_ARGS.START_DATE).date()
         end = (
-            pd.to_datetime(
-                BACKFILL_ARGS.END_DATE
-            ).date()
+            pd.to_datetime(BACKFILL_ARGS.END_DATE).date()
             if BACKFILL_ARGS.END_DATE
             else date.today()
         )
@@ -143,10 +121,7 @@ def dates_to_process() -> List[date]:
             start,
             end,
         )
-        return [
-            start + timedelta(days=i)
-            for i in range((end - start).days + 1)
-        ]
+        return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
     # today is always included and reprocessed, even if the watermark
     # already covers it -- the Lambda ingests up to three times a day
@@ -156,17 +131,8 @@ def dates_to_process() -> List[date]:
     # and overwrite_partitions replaces the partition each time.
     watermark = get_watermark()
     today = date.today()
-    start = (
-        today
-        if watermark is None
-        else min(
-            watermark + timedelta(days=1), today
-        )
-    )
-    return [
-        start + timedelta(days=i)
-        for i in range((today - start).days + 1)
-    ]
+    start = today if watermark is None else min(watermark + timedelta(days=1), today)
+    return [start + timedelta(days=i) for i in range((today - start).days + 1)]
 
 
 # ---------------------------------------------------------------------
@@ -185,15 +151,10 @@ def read_silver(
         df = wr.s3.read_parquet(
             path=INPUT_PATH,
             dataset=True,
-            partition_filter=lambda part: part.get(
-                "ingested_date"
-            )
-            in target_dates,
+            partition_filter=lambda part: part.get("ingested_date") in target_dates,
         )
     except wr.exceptions.NoFilesFound:
-        logger.warning(
-            "No silver data found for target dates"
-        )
+        logger.warning("No silver data found for target dates")
         return pd.DataFrame()
     logger.info(
         "Silver row count for this run: %d",
@@ -230,12 +191,8 @@ def build_dim_asset() -> pd.DataFrame:
         MAPPING_KEY,
     )
     s3 = boto3.client("s3")
-    response = s3.get_object(
-        Bucket=MAPPING_BUCKET, Key=MAPPING_KEY
-    )
-    asset_mapping = json.loads(
-        response["Body"].read()
-    )
+    response = s3.get_object(Bucket=MAPPING_BUCKET, Key=MAPPING_KEY)
+    asset_mapping = json.loads(response["Body"].read())
 
     rows = [
         {
@@ -247,9 +204,7 @@ def build_dim_asset() -> pd.DataFrame:
             "asset_type": v["asset_type"],
             "is_etf": v["asset_type"] == "etf",
         }
-        for k, v in asset_mapping[
-            "assets"
-        ].items()
+        for k, v in asset_mapping["assets"].items()
     ]
     return pd.DataFrame(rows)
 
@@ -272,9 +227,7 @@ def reconcile_unmapped_tickers(
     absent from asset_mapping.json, so fact_positions never references
     a ticker that doesn't exist in dim_asset."""
     known = set(dim_asset["ticker"])
-    unmapped = sorted(
-        set(fact_tickers.dropna()) - known
-    )
+    unmapped = sorted(set(fact_tickers.dropna()) - known)
     if not unmapped:
         return dim_asset
 
@@ -283,12 +236,7 @@ def reconcile_unmapped_tickers(
         len(unmapped),
         unmapped,
     )
-    placeholders = pd.DataFrame(
-        [
-            {"ticker": t, **DEFAULT_ASSET}
-            for t in unmapped
-        ]
-    )
+    placeholders = pd.DataFrame([{"ticker": t, **DEFAULT_ASSET} for t in unmapped])
     return pd.concat(
         [dim_asset, placeholders],
         ignore_index=True,
@@ -306,19 +254,13 @@ def to_date_id(dates) -> pd.Series:
     # (e.g. from pd.date_range) to a Series first, since .dt is a
     # Series-only accessor -- DatetimeIndex exposes the same
     # .strftime() directly on itself, not via .dt.
-    return (
-        pd.to_datetime(pd.Series(dates))
-        .dt.strftime("%Y%m%d")
-        .astype("int64")
-    )
+    return pd.to_datetime(pd.Series(dates)).dt.strftime("%Y%m%d").astype("int64")
 
 
 # ---------------------------------------------------------------------
 # dim_date
 # ---------------------------------------------------------------------
-def build_dim_date(
-    start: date, end: date
-) -> pd.DataFrame:
+def build_dim_date(start: date, end: date) -> pd.DataFrame:
     """Standard calendar dimension, one row per day in [start, end]."""
     days = pd.date_range(start, end, freq="D")
     return pd.DataFrame(
@@ -344,20 +286,12 @@ def merge_dim_date(
     de-duplicated by date_id. dim_date only ever grows.
     """
     try:
-        existing = wr.s3.read_parquet(
-            path=DIM_DATE_PATH, dataset=True
-        )
+        existing = wr.s3.read_parquet(path=DIM_DATE_PATH, dataset=True)
     except wr.exceptions.NoFilesFound:
-        existing = pd.DataFrame(
-            columns=new_rows.columns
-        )
+        existing = pd.DataFrame(columns=new_rows.columns)
 
-    combined = pd.concat(
-        [existing, new_rows], ignore_index=True
-    )
-    combined = combined.drop_duplicates(
-        subset="date_id"
-    ).sort_values("date_id")
+    combined = pd.concat([existing, new_rows], ignore_index=True)
+    combined = combined.drop_duplicates(subset="date_id").sort_values("date_id")
     return combined.reset_index(drop=True)
 
 
@@ -398,14 +332,8 @@ def collapse_to_daily(
     )
 
     daily = grouped.last()
-    daily["open_price"] = (
-        grouped["current_price"]
-        .first()["current_price"]
-        .values
-    )
-    daily = daily.rename(
-        columns={"current_price": "close_price"}
-    )
+    daily["open_price"] = grouped["current_price"].first()["current_price"].values
+    daily = daily.rename(columns={"current_price": "close_price"})
     return daily
 
 
@@ -430,47 +358,32 @@ def build_fact_positions(
     ] + FACT_MEASURE_COLS
     target_dates = set(df_silver["ingested_date"])
     lookback = (
-        df_lookback[cols]
-        if not df_lookback.empty
-        else pd.DataFrame(columns=cols)
+        df_lookback[cols] if not df_lookback.empty else pd.DataFrame(columns=cols)
     )
     combined = pd.concat(
         [lookback, df_silver[cols]],
         ignore_index=True,
     ).copy()
     combined = collapse_to_daily(combined)
-    combined = combined.sort_values(
-        ["ticker", "ingested_date"]
-    )
+    combined = combined.sort_values(["ticker", "ingested_date"])
 
     # NaN (not 0) when total_cost is 0/missing -- a 0% return would be
     # indistinguishable from an actual break-even position otherwise.
-    combined["unrealized_profit_loss_pct"] = (
-        combined["unrealized_profit_loss"]
-        / combined["total_cost"].replace(0, pd.NA)
-    )
+    combined["unrealized_profit_loss_pct"] = combined[
+        "unrealized_profit_loss"
+    ] / combined["total_cost"].replace(0, pd.NA)
 
     # Prior day's close per ticker. NaN (not 0) when there's no prior
     # day in scope (asset's first day, or a gap) -- a missing prior
     # close must not be read as a 0 price / -100% return.
-    prev_close = combined.groupby("ticker")[
-        "close_price"
-    ].shift(1)
-    combined["price_change"] = (
-        combined["close_price"] - prev_close
+    prev_close = combined.groupby("ticker")["close_price"].shift(1)
+    combined["price_change"] = combined["close_price"] - prev_close
+    combined["daily_return_pct"] = combined["price_change"] / prev_close.replace(
+        0, pd.NA
     )
-    combined["daily_return_pct"] = combined[
-        "price_change"
-    ] / prev_close.replace(0, pd.NA)
 
-    fact = combined[
-        combined["ingested_date"].isin(
-            target_dates
-        )
-    ].copy()
-    fact["date_id"] = to_date_id(
-        fact["ingested_date"]
-    )
+    fact = combined[combined["ingested_date"].isin(target_dates)].copy()
+    fact["date_id"] = to_date_id(fact["ingested_date"])
     return fact
 
 
@@ -528,36 +441,24 @@ def write_dim_date(df: pd.DataFrame) -> None:
 def main() -> None:
     dates = dates_to_process()
     if not dates:
-        logger.info(
-            "No new partitions to process. Exiting."
-        )
+        logger.info("No new partitions to process. Exiting.")
         return
 
     df_silver = read_silver(dates)
     if df_silver.empty:
-        logger.info(
-            "No silver data found for target dates. Exiting without writing."
-        )
+        logger.info("No silver data found for target dates. Exiting without writing.")
         return
 
     dim_asset = build_dim_asset()
-    dim_asset = reconcile_unmapped_tickers(
-        df_silver["ticker"], dim_asset
-    )
+    dim_asset = reconcile_unmapped_tickers(df_silver["ticker"], dim_asset)
     write_dim_asset(dim_asset)
 
-    new_dim_date_rows = build_dim_date(
-        min(dates), max(dates)
-    )
+    new_dim_date_rows = build_dim_date(min(dates), max(dates))
     dim_date = merge_dim_date(new_dim_date_rows)
     write_dim_date(dim_date)
 
-    df_lookback = read_silver_lookback_day(
-        min(dates)
-    )
-    fact_positions = build_fact_positions(
-        df_silver, df_lookback
-    )
+    df_lookback = read_silver_lookback_day(min(dates))
+    fact_positions = build_fact_positions(df_silver, df_lookback)
     write_fact_positions(fact_positions)
 
     if not IS_BACKFILL:
@@ -565,9 +466,7 @@ def main() -> None:
         # the last entry in dates, see dates_to_process) must stay
         # reprocessable by later runs the same day, so the watermark
         # only ever marks days that are fully in the past.
-        set_watermark(
-            max(dates) - timedelta(days=1)
-        )
+        set_watermark(max(dates) - timedelta(days=1))
 
     logger.info(
         "Job complete. Dates processed: %s",
